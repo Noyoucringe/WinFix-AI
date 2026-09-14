@@ -1,14 +1,12 @@
 import platform
 import socket
-import psutil
 from datetime import datetime
+
+import psutil
 
 
 def get_system_info():
-    """
-    Collect basic information about the Windows system.
-    This function is read-only.
-    """
+    """Collect basic read-only information about the Windows system."""
 
     boot_time = datetime.fromtimestamp(psutil.boot_time())
 
@@ -21,7 +19,7 @@ def get_system_info():
             "architecture": platform.machine(),
             "hostname": socket.gethostname(),
             "boot_time": boot_time.isoformat(),
-            "python_version": platform.python_version()
+            "python_version": platform.python_version(),
         },
-        "error": None
+        "error": None,
     }
