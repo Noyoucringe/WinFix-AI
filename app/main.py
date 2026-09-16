@@ -2,7 +2,10 @@ import json
 from datetime import datetime
 
 from app.diagnostics.system import get_system_info
-from app.diagnostics.performance import get_cpu_usage
+from app.diagnostics.performance import (
+    get_cpu_usage,
+    get_memory_usage
+)
 
 
 def main():
@@ -15,6 +18,7 @@ def main():
 
     result = get_system_info()
     cpu_result = get_cpu_usage()
+    memory_result = get_memory_usage()
 
     if not result["success"]:
         print("✗ Failed to collect system information")
@@ -35,11 +39,18 @@ def main():
     for key, value in cpu_result["data"].items():
         print(f"{key}: {value}")
 
+    print("\nMemory Information")
+    print("-" * 30)
+
+    for key, value in memory_result["data"].items():
+        print(f"{key}: {value}")
+
     report = {
         "timestamp": datetime.now().isoformat(),
         "diagnostics": {
             "system": result,
-            "cpu": cpu_result
+            "cpu": cpu_result,
+            "memory": memory_result
         }
     }
 
