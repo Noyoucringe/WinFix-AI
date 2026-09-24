@@ -39,6 +39,12 @@ SLOW_PC: dict[str, dict[str, Any]] = {
                     "healthy": True}}, "unhealthy": [], "healthy": True},
     "get_recent_system_errors": {"log": "System", "hours": 24, "count": 2,
                                  "critical_count": 0, "top_sources": [], "events": []},
+    "get_search_indexer_status": {
+        "service": {"name": "WSearch", "label": "Windows Search", "status": "running",
+                    "status_text": "Running", "start_type": "automatic", "running": True,
+                    "healthy": True},
+        "process_running": True, "memory_mb": 2150.0, "cpu_percent": 0.0,
+        "responding": False},
 }
 
 # After "Restart Windows Search": the indexer released its memory but other
@@ -47,6 +53,8 @@ SLOW_PC_AFTER_FIX_STILL_HIGH = copy.deepcopy(SLOW_PC)
 SLOW_PC_AFTER_FIX_STILL_HIGH["get_running_processes"]["groups"][1].update(
     memory_mb=96.0, not_responding=False)
 SLOW_PC_AFTER_FIX_STILL_HIGH["get_running_processes"]["not_responding_count"] = 0
+SLOW_PC_AFTER_FIX_STILL_HIGH["get_search_indexer_status"].update(memory_mb=96.0,
+                                                                 responding=True)
 SLOW_PC_AFTER_FIX_STILL_HIGH["get_memory_usage"].update(usage_percent=72.0, used_gb=11.3)
 
 # The design's success case: indexer fixed and memory back to normal.
@@ -61,6 +69,8 @@ HEALTHY_PC: dict[str, dict[str, Any]] = {
                               "not_responding_count": 0,
                               "groups": [dict(_GROUPS_SLOW[0], memory_mb=900.0)],
                               "processes": []},
+    "get_search_indexer_status": dict(SLOW_PC["get_search_indexer_status"],
+                                      memory_mb=80.0, responding=True),
 }
 
 STORAGE_FULL: dict[str, dict[str, Any]] = {

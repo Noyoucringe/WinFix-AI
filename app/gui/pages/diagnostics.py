@@ -230,6 +230,12 @@ class DiagnosticsPage(Page):
         self.tabs.changed.connect(self._show_tab)
 
     # --- lifecycle -----------------------------------------------------------
+    def _runner(self):
+        """Live, read-only measurements, even in demo mode (this page shows this PC)."""
+        if self.ctx.demo is not None:
+            return self.ctx.demo.live_execute
+        return get_registry().execute_tool
+
     def on_show(self, tab: str | None = None, **params) -> None:
         self.tabs.select(tab or self.current)
 
@@ -373,10 +379,10 @@ class DiagnosticsPage(Page):
         if key in self.data and not force:
             return
         tools = TAB_TOOLS[key]
-        registry = get_registry()
+        run = self._runner()
 
         def collect() -> dict:
-            return {t: registry.execute_tool(t) for t in tools}
+            return {t: run(t) for t in tools}
 
         run_async(collect, lambda results: self._render(key, results),
                   lambda m, d: self.ctx.error("Couldn't collect diagnostics", m, d))
@@ -491,11 +497,10 @@ class DiagnosticsPage(Page):
 
     def _run_network_tests(self) -> None:
         self._net_status.setText("Testing…")
-        registry = get_registry()
+        tool = self._runner()
 
         def run():
-            return {t: registry.execute_tool(t) for t in ("ping_gateway", "test_dns",
-                                                          "test_internet")}
+            return {t: tool(t) for t in ("ping_gateway", "test_dns", "test_internet")}
 
         def done(results: dict) -> None:
             def ok(tool, key):
