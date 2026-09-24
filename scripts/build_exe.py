@@ -1,39 +1,50 @@
-"""Build a standalone Windows executable (WinFix.exe) with PyInstaller.
+"""Build the standalone Windows executable (WinFix.exe).
 
-Run on Windows:
+Must be run **on Windows** — PyInstaller cannot cross-compile, so a Windows
+binary cannot be produced from Linux or macOS.
 
-    python -m pip install -r requirements.txt pyinstaller
-    python scripts/build_exe.py
+    py -m pip install -r requirements.txt pyinstaller
+    py scripts/build_exe.py
 
-The result is ``dist/WinFix.exe``. API keys are never bundled: configuration is
-read from a ``.env`` next to the executable at runtime.
+Output: dist/WinFix.exe
+
+CI builds the same artifact via .github/workflows/build-windows.yml.
 """
 
 from __future__ import annotations
 
+import platform
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ENTRY = ROOT / "app" / "main.py"
+SPEC = ROOT / "winfix.spec"
 
 
 def main() -> int:
-    args = [
-        sys.executable, "-m", "PyInstaller",
-        "--name", "WinFix",
-        "--onefile",
-        "--windowed",
-        "--noconfirm",
-        "--clean",
-        # Ensure lazily-imported modules are collected.
-        "--collect-submodules", "app",
-        "--hidden-import", "PySide6.QtWidgets",
-        str(ENTRY),
-    ]
+    if platform.system() != "Windows":
+        print(
+            "Refusing to build: PyInstaller cannot cross-compile a Windows .exe\n"
+            f"from {platform.system()}. Run this on Windows, or let the\n"
+            "'Build Windows executable' GitHub Actions workflow build it for you.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        import PyInstaller  # noqa: F401
+    except ImportError:
+        print("PyInstaller is not installed. Run: py -m pip install pyinstaller",
+              file=sys.stderr)
+        return 1
+
+    args = [sys.executable, "-m", "PyInstaller", str(SPEC), "--noconfirm", "--clean"]
     print("Running:", " ".join(args))
-    return subprocess.call(args, cwd=str(ROOT))
+    code = subprocess.call(args, cwd=str(ROOT))
+    if code == 0:
+        print(f"\nBuilt: {ROOT / 'dist' / 'WinFix.exe'}")
+    return code
 
 
 if __name__ == "__main__":
