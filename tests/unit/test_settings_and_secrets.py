@@ -114,3 +114,25 @@ def test_elevation_result_must_match_requested_tool():
     path = elevation.request_dir() / "v.json"
     path.write_text(json.dumps({"tool": "other", "success": True}))
     assert elevation.read_result("flush_dns", path)["success"] is False
+
+
+def test_crashing_credential_backend_falls_back_to_session_only(monkeypatch):
+    """Native keyring backends can raise BaseException subclasses (e.g. a Rust
+    panic); WinFix must keep working and keep the key in memory only."""
+    from app.core import credentials
+
+    class Panic(BaseException):
+        pass
+
+    class Broken:
+        def get_password(self, *a):
+            raise Panic("backend crashed")
+
+        set_password = delete_password = get_password
+
+    monkeypatch.setattr(credentials, "_keyring", lambda: Broken())
+    persisted, message = credentials.set_api_key("openai", "sk-test-abcdefghijklmnop1234")
+    assert not persisted and "until you close" in message
+    assert credentials.get_api_key("openai") == "sk-test-abcdefghijklmnop1234"
+    credentials.delete_api_key("openai")
+    assert credentials.get_api_key("openai") is None

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from app.gui.icons import IconLabel
 from app.gui.pages.base import AppContext, Page, relative_date, result_state
 from app.gui.widgets.composite import EmptyState, Footnote
-from app.gui.widgets.core import Button, Card, Divider, RowButton, SearchBox, Text
+from app.gui.widgets.core import Button, Card, Divider, FlowLayout, RowButton, SearchBox, Text
 from app.gui.widgets.status import Status
 from app.gui.workers import run_async
 from app.knowledge.categories import category_icon
@@ -55,13 +55,11 @@ class ProblemInput(Card):
         self.body.addSpacing(16)
         self.add(Text("Try an example", "caption", "secondary"))
         self.body.addSpacing(8)
-        chips = QHBoxLayout()
-        chips.setSpacing(8)
+        chips = FlowLayout(spacing=8)
         for icon, text in EXAMPLES:
             chip = Button(text, "Chip", icon)
             chip.clicked.connect(lambda _=False, t=text: self._use(t))
             chips.addWidget(chip)
-        chips.addStretch(1)
         self.add(chips)
 
     def _use(self, text: str) -> None:

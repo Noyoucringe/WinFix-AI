@@ -33,20 +33,37 @@ def _keyring():
         import keyring
 
         return keyring
-    except ImportError:
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:  # noqa: BLE001 - a broken backend must not crash the app
         return None
+
+
+class _BackendFailure(Exception):
+    pass
+
+
+def _safe(call, *args):
+    """Run a keyring call; any backend failure (including native panics that
+    derive from BaseException) means 'store unavailable', never a crash."""
+    try:
+        return call(*args)
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except BaseException as exc:  # noqa: BLE001 - backend bugs must not crash the app
+        raise _BackendFailure(type(exc).__name__) from None
 
 
 def get_api_key(provider_type: str) -> str | None:
     kr = _keyring()
     if kr is not None:
         try:
-            key = kr.get_password(SERVICE, _user(provider_type))
+            key = _safe(kr.get_password, SERVICE, _user(provider_type))
             if key:
                 return key
-        except Exception as exc:  # noqa: BLE001 - no backend available
+        except _BackendFailure as exc:
             logger.debug("credential store unavailable",
-                         extra={"component": "credentials", "status": type(exc).__name__})
+                         extra={"component": "credentials", "status": str(exc)})
     if provider_type in _session_only:
         return _session_only[provider_type]
     # Developer fallback: a key in the environment / .env. Never written anywhere.
@@ -61,14 +78,14 @@ def set_api_key(provider_type: str, key: str) -> tuple[bool, str]:
     kr = _keyring()
     if kr is not None:
         try:
-            kr.set_password(SERVICE, _user(provider_type), key)
+            _safe(kr.set_password, SERVICE, _user(provider_type), key)
             _session_only.pop(provider_type, None)
             logger.info("api key saved", extra={"component": "credentials",
                                                 "event": "saved"})
             return True, f"Stored in {store_name()}."
-        except Exception as exc:  # noqa: BLE001
+        except _BackendFailure as exc:
             logger.warning("credential store write failed",
-                           extra={"component": "credentials", "status": type(exc).__name__})
+                           extra={"component": "credentials", "status": str(exc)})
     _session_only[provider_type] = key
     return False, ("Couldn't save the key to the credential store. It will be used until "
                    "you close WinFix AI.")
@@ -79,8 +96,8 @@ def delete_api_key(provider_type: str) -> None:
     kr = _keyring()
     if kr is not None:
         try:
-            kr.delete_password(SERVICE, _user(provider_type))
-        except Exception:  # noqa: BLE001 - nothing stored
+            _safe(kr.delete_password, SERVICE, _user(provider_type))
+        except _BackendFailure:  # nothing stored, or no store
             pass
 
 
