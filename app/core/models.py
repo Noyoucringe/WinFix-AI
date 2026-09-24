@@ -129,6 +129,7 @@ class Diagnosis(BaseModel):
     category: Category = Category.UNKNOWN
     summary: str = ""
     headline: str = ""
+    short_label: str = ""  # e.g. "Memory pressure" for History rows
     level: Level = Level.OK
     possible_causes: list[Cause] = Field(default_factory=list)
     evidence_cards: list[EvidenceCard] = Field(default_factory=list)
@@ -280,8 +281,10 @@ class Session(BaseModel):
     def short_diagnosis(self) -> str:
         if not self.diagnosis:
             return ""
+        if self.diagnosis.short_label:
+            return self.diagnosis.short_label
         top = self.diagnosis.top_cause
-        return top.cause if top else self.diagnosis.headline or self.diagnosis.summary
+        return top.cause if top else self.diagnosis.headline
 
     def add_event(self, kind: str, title: str, detail: str = "") -> TimelineEvent:
         event = TimelineEvent(kind=kind, title=title, detail=detail)

@@ -76,6 +76,42 @@ _HEADLINES = {
     "many_startup": "Many apps start when you sign in.",
 }
 
+# Short names for History's "Diagnosis" column.
+SHORT_LABELS = {
+    "memory_pressure": "Memory pressure",
+    "high_cpu": "High CPU usage",
+    "search_indexer": "Windows Search indexer issue",
+    "large_apps": "Large background apps",
+    "low_disk": "Low disk space",
+    "temp_files": "Temporary files",
+    "recycle_bin": "Recycle Bin",
+    "no_adapter": "No network connection",
+    "gateway_unreachable": "Router not responding",
+    "no_gateway": "No network address",
+    "dns_failure": "DNS not resolving",
+    "internet_unreachable": "Internet provider issue",
+    "update_disabled": "Windows Update disabled",
+    "reboot_pending": "Restart required to finish updates",
+    "update_space": "Not enough space for updates",
+    "bt_missing": "No Bluetooth adapter",
+    "bt_problem": "Bluetooth adapter problem",
+    "device_problem": "Device problem",
+    "app_crashes": "App crashes",
+    "unresponsive": "App not responding",
+    "many_startup": "High-impact startup apps",
+    "system_errors": "System errors",
+    "long_uptime": "Long time since restart",
+}
+
+
+def short_label(cause: Cause) -> str:
+    if cause.id in SHORT_LABELS:
+        return SHORT_LABELS[cause.id]
+    if cause.id.startswith("service:"):
+        return cause.cause.replace(" isn't running", " not running")
+    return cause.cause
+
+
 Rule = Callable[[Results, Category], list[Cause]]
 
 
@@ -645,6 +681,7 @@ def analyze(category: Category, results: Results) -> Diagnosis:
     return Diagnosis(
         category=category,
         headline=headline,
+        short_label=short_label(problems[0]) if problems else "No problem found",
         summary=summary.strip(),
         level=level,
         possible_causes=causes,
