@@ -71,8 +71,9 @@ class RemediationEngine:
     def _reason_for(self, diagnosis: Diagnosis, action_desc: str) -> str:
         top = diagnosis.top_cause
         if top:
-            return f"{action_desc} — recommended because {top.cause.lower()}."
-        return action_desc
+            cause = top.cause[:1].lower() + top.cause[1:]
+            return f"Recommended because {cause} ({top.likelihood_word})."
+        return "A safe first step that commonly resolves this kind of problem."
 
     def execute(
         self,

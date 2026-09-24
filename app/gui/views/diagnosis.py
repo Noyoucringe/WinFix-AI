@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
-    QLabel,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -14,30 +13,42 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.models import RemediationProposal, Session
-from app.gui.theme import RISK_COLORS
-from app.gui.widgets import Card, hline, muted, section_header, title_label
+from app.gui.theme import TEXT_MUTED
+from app.gui.widgets import (
+    Card,
+    ConfidenceBar,
+    Pill,
+    body,
+    container,
+    divider,
+    eyebrow,
+    faint,
+    heading,
+    muted,
+    risk_pill,
+    title_label,
+)
 
 
 class DiagnosisView(QWidget):
     approve = Signal(object)   # RemediationProposal
     cancel = Signal()
-    back = Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self._proposal: RemediationProposal | None = None
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(40, 30, 40, 30)
+        outer.setContentsMargins(0, 0, 0, 0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        container = QWidget()
-        self.body = QVBoxLayout(container)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        host = container()
+        self.body = QVBoxLayout(host)
+        self.body.setContentsMargins(56, 48, 56, 40)
         self.body.setSpacing(16)
-        self.body.setContentsMargins(0, 0, 0, 0)
-        scroll.setWidget(container)
+        scroll.setWidget(host)
         outer.addWidget(scroll)
 
     def _clear(self) -> None:
@@ -51,85 +62,106 @@ class DiagnosisView(QWidget):
         self._clear()
         diag = session.diagnosis
 
-        self.body.addWidget(title_label("Diagnosis"))
+        self.body.addWidget(eyebrow("DIAGNOSIS"))
+        self.body.addWidget(title_label("Here's what we found"))
         self.body.addWidget(muted(f"Problem: {session.problem}"))
+        self.body.addSpacing(6)
 
-        # Diagnosis summary
-        summary_card = Card()
-        summary_card.add(section_header("What we found"))
-        summary_card.add(muted(diag.summary if diag else "No diagnosis available."))
-        source = (diag.analysis_source if diag else "local").upper()
-        summary_card.add(muted(f"Analysis source: {source}"))
-        self.body.addWidget(summary_card)
-
-        # Evidence / causes
+        # --- evidence / causes ---
         if diag and diag.possible_causes:
-            causes_card = Card()
-            causes_card.add(section_header("Possible causes"))
-            for c in diag.possible_causes:
-                causes_card.add(QLabel(
-                    f"• {c.cause}  ({c.likelihood_word}, confidence {c.confidence:.0%})"
-                ))
+            causes = Card(spacing=12)
+            causes.add(body(diag.summary))
+            causes.add(divider())
+            causes.add(heading("What the evidence shows"))
+            for i, c in enumerate(diag.possible_causes):
+                if i:
+                    causes.add(divider())
+                causes.add(body(c.cause))
+                causes.add(ConfidenceBar(c.confidence, c.likelihood_word))
                 for e in c.evidence:
-                    causes_card.add(muted(f"     – {e}"))
-            self.body.addWidget(causes_card)
+                    causes.add(faint(f"— {e}"))
+            self.body.addWidget(causes)
+        else:
+            empty = Card()
+            empty.add(heading("No strong signal found"))
+            empty.add(muted(
+                "The diagnostics ran successfully but did not point clearly to a "
+                "single cause. The technical details are saved in this session's "
+                "history."
+            ))
+            self.body.addWidget(empty)
 
-        # Recommended fix / approval
+        # --- collected diagnostics summary ---
+        ok = sum(1 for r in session.diagnostics.values() if r.get("success"))
+        total = len(session.diagnostics)
+        source = (diag.analysis_source if diag else "local").upper()
+        meta = Card(spacing=8)
+        meta.add(heading("Diagnostics collected"))
+        meta.add(muted(f"{ok} of {total} diagnostics returned data."))
+        meta.add(faint(f"Analysis source: {source}"))
+        self.body.addWidget(meta)
+
+        # --- recommended fix / approval gate ---
         if session.proposals:
             self._proposal = session.proposals[0]
             self.body.addWidget(self._approval_card(self._proposal))
         else:
-            no_fix = Card()
-            no_fix.add(section_header("No automatic fix available"))
-            no_fix.add(muted(
-                "WinFix did not find a safe, whitelisted automatic fix for this "
-                "problem. Review the evidence above; manual steps may be needed."
+            self._proposal = None
+            none_card = Card()
+            none_card.add(heading("No automatic fix available"))
+            none_card.add(muted(
+                "WinFix has no safe, whitelisted automatic fix for this problem. "
+                "Review the evidence above — manual steps may be needed."
             ))
-            self.body.addWidget(no_fix)
+            self.body.addWidget(none_card)
 
-        back_btn = QPushButton("Back to Home")
-        back_btn.clicked.connect(self.back.emit)
-        self.body.addWidget(back_btn)
         self.body.addStretch(1)
 
     def _approval_card(self, proposal: RemediationProposal) -> Card:
-        card = Card()
-        card.add(section_header("Recommended fix"))
-        card.add(QLabel(proposal.title))
-        card.add(muted(f"Why: {proposal.reason}"))
+        card = Card(spacing=12)
 
-        risk = proposal.risk_level.value
-        color = RISK_COLORS.get(risk, "#f59e0b")
-        risk_label = QLabel(f"Risk: {risk.upper()}")
-        risk_label.setStyleSheet(f"color:{color}; font-weight:700;")
-        card.add(risk_label)
-        if proposal.consequences:
-            card.add(muted(proposal.consequences))
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(heading("Recommended fix"))
+        header.addStretch(1)
+        header.addWidget(risk_pill(proposal.risk_level.value))
         if proposal.requires_admin:
-            card.add(muted("Requires administrator privileges."))
+            header.addWidget(Pill("ADMIN", TEXT_MUTED, "transparent"))
+        card.add(container(header))
 
-        card.add(hline())
+        card.add(body(proposal.title))
+        card.add(muted(proposal.reason))
+        if proposal.consequences:
+            card.add(faint(proposal.consequences))
+
+        card.add(divider())
+
         buttons = QHBoxLayout()
-        approve_btn = QPushButton("Approve Fix")
-        approve_btn.setObjectName("Primary")
-        if risk == "high":
-            approve_btn.setText("Approve High-Risk Fix")
-            approve_btn.setObjectName("Danger")
-        approve_btn.clicked.connect(self._on_approve)
+        buttons.setContentsMargins(0, 0, 0, 0)
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("Ghost")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.clicked.connect(self.cancel.emit)
+
+        is_high = proposal.risk_level.value == "high"
+        approve_btn = QPushButton(
+            "Approve High-Risk Fix" if is_high else "Approve Fix"
+        )
+        approve_btn.setObjectName("Danger" if is_high else "Primary")
+        approve_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        approve_btn.clicked.connect(self._on_approve)
+
         buttons.addWidget(cancel_btn)
         buttons.addStretch(1)
         buttons.addWidget(approve_btn)
-        wrapper = QWidget()
-        wrapper.setLayout(buttons)
-        card.add(wrapper)
+        card.add(container(buttons))
+
+        card.add(faint("Nothing is changed until you approve."))
         return card
 
     def _on_approve(self) -> None:
         if not self._proposal:
             return
-        # High-risk actions require a stronger confirmation.
         if self._proposal.risk_level.value == "high":
             text, ok = QInputDialog.getText(
                 self, "Confirm high-risk fix",

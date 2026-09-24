@@ -104,7 +104,10 @@ class VerificationEngine:
             )
         improved = improved_signals > 0
         if improved:
-            summary = "The recommended fix appears to have improved the situation."
+            summary = (
+                f"{improved_signals} of {checked} measured signals improved after "
+                "the fix."
+            )
         else:
-            summary = "The recommended fix did not clearly improve the measured signals."
+            summary = f"None of the {checked} measured signals improved after the fix."
         return improved, summary, metrics

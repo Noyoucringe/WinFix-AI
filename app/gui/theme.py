@@ -1,17 +1,29 @@
-"""Application stylesheet and shared style constants."""
+"""Design system: color tokens, spacing, and the application stylesheet."""
 
 from __future__ import annotations
 
-PRIMARY = "#2563eb"
-PRIMARY_DARK = "#1d4ed8"
-BG = "#0f172a"
-SURFACE = "#1e293b"
-SURFACE_2 = "#334155"
-TEXT = "#e2e8f0"
-MUTED = "#94a3b8"
-SUCCESS = "#22c55e"
-WARN = "#f59e0b"
-DANGER = "#ef4444"
+# --- Color tokens ---------------------------------------------------------
+BG = "#0B1020"          # app background
+SIDEBAR = "#0E1526"     # navigation rail
+SURFACE = "#151D33"     # cards
+SURFACE_HOVER = "#1C2740"
+BORDER = "#25314F"
+BORDER_SOFT = "#1B2540"
+
+TEXT = "#EAF0FF"
+TEXT_MUTED = "#8FA0C4"
+TEXT_FAINT = "#64769B"
+
+PRIMARY = "#3B82F6"
+PRIMARY_HOVER = "#2F6FE0"
+PRIMARY_SOFT = "#16264A"
+
+SUCCESS = "#34D399"
+SUCCESS_SOFT = "#0E2E26"
+WARN = "#FBBF24"
+WARN_SOFT = "#332612"
+DANGER = "#F87171"
+DANGER_SOFT = "#3A1A1C"
 
 RISK_COLORS = {
     "none": SUCCESS,
@@ -19,61 +31,145 @@ RISK_COLORS = {
     "medium": WARN,
     "high": DANGER,
 }
+RISK_SOFT = {
+    "none": SUCCESS_SOFT,
+    "low": SUCCESS_SOFT,
+    "medium": WARN_SOFT,
+    "high": DANGER_SOFT,
+}
 
 STYLESHEET = f"""
+/* ---- base ---- */
 QWidget {{
     background-color: {BG};
     color: {TEXT};
-    font-family: 'Segoe UI', 'Inter', sans-serif;
+    font-family: 'Segoe UI Variable', 'Segoe UI', 'Inter', sans-serif;
     font-size: 14px;
 }}
-QLabel#Title {{
-    font-size: 30px;
-    font-weight: 700;
+
+/* Labels and layout containers must never paint their own panel background,
+   otherwise they show as dark rectangles when placed inside a lighter card. */
+QLabel {{
+    background: transparent;
 }}
-QLabel#Subtitle {{
-    font-size: 16px;
-    color: {MUTED};
+QWidget#Transparent {{
+    background: transparent;
 }}
-QLabel#SectionHeader {{
-    font-size: 18px;
+
+/* ---- typography ---- */
+QLabel#Display  {{ font-size: 32px; font-weight: 700; letter-spacing: -0.5px; }}
+QLabel#Title    {{ font-size: 24px; font-weight: 700; letter-spacing: -0.3px; }}
+QLabel#Heading  {{ font-size: 16px; font-weight: 600; }}
+QLabel#Body     {{ font-size: 14px; color: {TEXT}; }}
+QLabel#Muted    {{ font-size: 13px; color: {TEXT_MUTED}; }}
+QLabel#Faint    {{ font-size: 12px; color: {TEXT_FAINT}; }}
+QLabel#Metric   {{ font-size: 13px; color: {TEXT_MUTED}; }}
+QLabel#Eyebrow  {{
+    font-size: 11px; font-weight: 700; color: {TEXT_FAINT};
+    letter-spacing: 1.2px;
+}}
+
+/* ---- sidebar ---- */
+QFrame#Sidebar {{
+    background-color: {SIDEBAR};
+    border-right: 1px solid {BORDER_SOFT};
+}}
+QLabel#Brand     {{ font-size: 18px; font-weight: 700; }}
+QLabel#BrandMark {{
+    font-size: 17px; font-weight: 800; color: white;
+    background-color: {PRIMARY}; border-radius: 9px;
+}}
+QPushButton#NavItem {{
+    background: transparent;
+    color: {TEXT_MUTED};
+    text-align: left;
+    padding: 11px 14px;
+    border-radius: 9px;
     font-weight: 600;
 }}
-QLabel#Muted {{
-    color: {MUTED};
-}}
+QPushButton#NavItem:hover {{ background-color: {SURFACE_HOVER}; color: {TEXT}; }}
+QPushButton#NavItem:checked {{ background-color: {PRIMARY_SOFT}; color: {TEXT}; }}
+
+/* ---- cards ---- */
 QFrame#Card {{
     background-color: {SURFACE};
-    border: 1px solid {SURFACE_2};
-    border-radius: 12px;
+    border: 1px solid {BORDER};
+    border-radius: 14px;
 }}
-QTextEdit, QLineEdit, QPlainTextEdit {{
-    background-color: {SURFACE};
-    border: 1px solid {SURFACE_2};
-    border-radius: 8px;
-    padding: 10px;
+QFrame#Banner {{ border-radius: 14px; border: 1px solid {BORDER}; }}
+QFrame#Divider {{ background-color: {BORDER}; max-height: 1px; border: none; }}
+
+/* ---- inputs ---- */
+QPlainTextEdit, QTextEdit, QLineEdit {{
+    background-color: {BG};
+    border: 1px solid {BORDER};
+    border-radius: 12px;
+    padding: 14px;
+    font-size: 15px;
     selection-background-color: {PRIMARY};
 }}
+QPlainTextEdit:focus, QTextEdit:focus, QLineEdit:focus {{ border: 1px solid {PRIMARY}; }}
+
+/* ---- buttons ---- */
 QPushButton {{
-    background-color: {SURFACE_2};
-    border: none;
-    border-radius: 8px;
-    padding: 10px 18px;
+    background-color: {SURFACE_HOVER};
+    color: {TEXT};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+    padding: 11px 20px;
     font-weight: 600;
 }}
-QPushButton:hover {{ background-color: #3f4c63; }}
-QPushButton#Primary {{ background-color: {PRIMARY}; color: white; }}
-QPushButton#Primary:hover {{ background-color: {PRIMARY_DARK}; }}
-QPushButton#Danger {{ background-color: {DANGER}; color: white; }}
-QPushButton:disabled {{ background-color: #263143; color: {MUTED}; }}
-QListWidget {{
+QPushButton:hover  {{ background-color: {BORDER}; }}
+QPushButton:disabled {{ background-color: {SURFACE}; color: {TEXT_FAINT}; border-color: {BORDER_SOFT}; }}
+
+QPushButton#Primary {{ background-color: {PRIMARY}; border: none; color: white; padding: 12px 24px; }}
+QPushButton#Primary:hover {{ background-color: {PRIMARY_HOVER}; }}
+QPushButton#Danger  {{ background-color: {DANGER}; border: none; color: #2A0B0C; padding: 12px 24px; }}
+QPushButton#Ghost   {{ background: transparent; border: 1px solid {BORDER}; color: {TEXT_MUTED}; }}
+QPushButton#Ghost:hover {{ color: {TEXT}; background-color: {SURFACE_HOVER}; }}
+
+/* Example-problem chips on the home screen */
+QPushButton#Chip {{
     background-color: {SURFACE};
-    border: 1px solid {SURFACE_2};
-    border-radius: 8px;
-    padding: 4px;
+    border: 1px solid {BORDER};
+    color: {TEXT_MUTED};
+    text-align: left;
+    padding: 12px 14px;
+    font-weight: 500;
+    border-radius: 10px;
 }}
-QListWidget::item {{ padding: 10px; border-radius: 6px; }}
-QListWidget::item:selected {{ background-color: {PRIMARY}; color: white; }}
-QScrollBar:vertical {{ background: {BG}; width: 10px; }}
-QScrollBar::handle:vertical {{ background: {SURFACE_2}; border-radius: 5px; }}
+QPushButton#Chip:hover {{ border-color: {PRIMARY}; color: {TEXT}; background-color: {SURFACE_HOVER}; }}
+
+/* ---- lists ---- */
+QListWidget {{
+    background-color: transparent;
+    border: none;
+    outline: none;
+}}
+QListWidget::item {{
+    padding: 11px 12px;
+    border-radius: 9px;
+    color: {TEXT_MUTED};
+    margin-bottom: 3px;
+}}
+QListWidget::item:selected {{ background-color: {PRIMARY_SOFT}; color: {TEXT}; }}
+QListWidget#Steps::item {{ color: {TEXT}; }}
+
+/* ---- progress bar (confidence) ---- */
+QProgressBar {{
+    background-color: {BG};
+    border: none;
+    border-radius: 4px;
+    height: 7px;
+    text-align: center;
+}}
+QProgressBar::chunk {{ background-color: {PRIMARY}; border-radius: 4px; }}
+
+/* ---- scrollbars ---- */
+QScrollArea {{ border: none; background: transparent; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 4px; }}
+QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; min-height: 30px; }}
+QScrollBar::handle:vertical:hover {{ background: {TEXT_FAINT}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 """

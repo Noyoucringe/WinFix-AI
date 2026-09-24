@@ -1,5 +1,41 @@
 """Reusable GUI widgets."""
 
-from app.gui.widgets.common import Card, hline, muted, section_header, title_label
+from app.gui.widgets.common import (
+    Card,
+    ConfidenceBar,
+    Pill,
+    body,
+    container,
+    display,
+    divider,
+    eyebrow,
+    faint,
+    heading,
+    hline,
+    muted,
+    risk_pill,
+    row,
+    section_header,
+    status_dot,
+    title_label,
+)
 
-__all__ = ["Card", "hline", "muted", "section_header", "title_label"]
+__all__ = [
+    "Card",
+    "ConfidenceBar",
+    "Pill",
+    "body",
+    "container",
+    "display",
+    "divider",
+    "eyebrow",
+    "faint",
+    "heading",
+    "hline",
+    "muted",
+    "risk_pill",
+    "row",
+    "section_header",
+    "status_dot",
+    "title_label",
+]
