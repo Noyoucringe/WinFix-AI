@@ -179,7 +179,23 @@ Verification re-runs the relevant diagnostics and compares measured signals
 
 ---
 
-## Installation
+## Download (Windows)
+
+**[Download the latest WinFix.exe →](https://github.com/Noyoucringe/WinFix-AI/releases/latest)**
+
+1. Download `WinFix.exe` from the latest release.
+2. Double-click it. No Python installation is required.
+3. Windows SmartScreen may warn that the publisher is unknown — the build is
+   not code-signed. Choose **More info → Run anyway** if you trust the build.
+
+Some fixes (restarting services, network adapters) need elevation: right-click
+`WinFix.exe` → **Run as administrator**. Diagnostics work fine without it.
+
+WinFix stores its history, logs, and reports in `%LOCALAPPDATA%\WinFixAI`.
+To enable AI-written explanations, drop a `.env` file next to `WinFix.exe`
+(see `.env.example`). The executable never contains API keys.
+
+## Installation from source
 
 ```bash
 git clone https://github.com/Noyoucringe/WinFix-AI.git
@@ -256,13 +272,29 @@ invalid parameters are rejected, and the agent/remediation loops are bounded.
 
 ## Packaging
 
-```bash
-pip install pyinstaller
-python scripts/build_exe.py   # produces dist/WinFix.exe (run on Windows)
+PyInstaller **cannot cross-compile** — a Windows `.exe` can only be built on
+Windows.
+
+**On Windows:**
+
+```powershell
+py -m pip install -r requirements.txt pyinstaller
+py scripts/build_exe.py        # -> dist/WinFix.exe
 ```
 
-The executable launches the GUI, reads configuration from a `.env` beside it,
-and never contains API keys.
+**Via CI (any platform):** `.github/workflows/build-windows.yml` builds the
+same artifact on a `windows-latest` runner. It runs on every push to `main`
+and can be triggered manually from the **Actions** tab; the `.exe` is uploaded
+as a build artifact. Pushing a tag that starts with `v` (e.g. `v1.1.0`) also
+publishes it as a downloadable GitHub Release asset:
+
+```bash
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+The build is defined by `winfix.spec` (bundled icon/assets, Windows version
+resource, trimmed Qt modules). The executable launches the GUI, reads
+configuration from a `.env` beside it, and never contains API keys.
 
 ---
 
