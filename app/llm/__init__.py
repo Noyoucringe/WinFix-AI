@@ -1,14 +1,5 @@
-"""LLM provider abstraction.
+"""LLM provider abstraction (local by default; optional cloud providers)."""
 
-The application talks to LLMs only through :class:`LLMProvider`. Providers are
-selected via configuration; the ``local`` provider requires no network and no
-API key so the product always works offline.
-"""
+from app.llm.provider import AI_UNAVAILABLE, LLMProvider, LocalProvider, get_provider
 
-from app.llm.provider import (
-    LLMProvider,
-    LLMResponse,
-    get_provider,
-)
-
-__all__ = ["LLMProvider", "LLMResponse", "get_provider"]
+__all__ = ["AI_UNAVAILABLE", "LLMProvider", "LocalProvider", "get_provider"]

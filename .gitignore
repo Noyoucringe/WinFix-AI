@@ -26,3 +26,10 @@ logs/
 
 # Local database
 *.db
+
+# Local app data when running from source (packaged builds use %LOCALAPPDATA%\WinFixAI)
+settings.json
+*.corrupt.json
+elevation/
+*.db-wal
+*.db-shm

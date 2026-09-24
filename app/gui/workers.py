@@ -1,65 +1,69 @@
-"""Background workers so the GUI never blocks on diagnostics or fixes.
+"""Background execution for the GUI.
 
-All agent work runs on a ``QThread``; the UI is updated only via signals.
+Anything that can take time — diagnostics, contacting an LLM, a fix,
+verification, loading history — runs on a worker thread so the window never
+freezes. Results come back to the UI thread through Qt signals.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import traceback
+from typing import Any, Callable
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
-from app.core.agent import Agent
-from app.core.models import RemediationProposal, Session
+from app.core.logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 
-class DiagnoseWorker(QThread):
-    """Runs the agent's diagnosis phase, streaming reasoning steps."""
+class _Signals(QObject):
+    done = Signal(object)
+    failed = Signal(str, str)  # user message, technical detail
 
-    step = Signal(object)          # AgentStep
-    finished_ok = Signal(object)   # Session
-    failed = Signal(str)
 
-    def __init__(self, agent: Agent, problem: str) -> None:
+class _Task(QRunnable):
+    def __init__(self, fn: Callable[[], Any], signals: _Signals) -> None:
         super().__init__()
-        self._agent = agent
-        self._problem = problem
+        self.fn = fn
+        self.signals = signals
+        self.setAutoDelete(True)
 
-    def run(self) -> None:  # pragma: no cover - requires Qt event loop
+    def run(self) -> None:
         try:
-            result = self._agent.diagnose(
-                self._problem, progress=lambda s: self.step.emit(s)
-            )
-            self.finished_ok.emit(result.session)
-        except Exception as exc:  # noqa: BLE001
-            self.failed.emit(str(exc))
+            result = self.fn()
+        except Exception as exc:  # noqa: BLE001 - reported to the UI, not swallowed
+            detail = traceback.format_exc()
+            logger.error("background task failed",
+                         extra={"component": "gui", "event": "task_failed",
+                                "status": type(exc).__name__})
+            self.signals.failed.emit(str(exc) or type(exc).__name__, detail)
+            return
+        self.signals.done.emit(result)
 
 
-class RemediateWorker(QThread):
-    """Runs an approved remediation and verification."""
+_pool = QThreadPool()
+_pool.setMaxThreadCount(4)
+_live: set[_Signals] = set()
 
-    finished_ok = Signal(object)   # Session
-    failed = Signal(str)
 
-    def __init__(
-        self,
-        agent: Agent,
-        session: Session,
-        proposal: RemediationProposal,
-        arguments: dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__()
-        self._agent = agent
-        self._session = session
-        self._proposal = proposal
-        self._arguments = arguments or {}
+def run_async(fn: Callable[[], Any], on_done: Callable[[Any], None] | None = None,
+              on_error: Callable[[str, str], None] | None = None) -> None:
+    """Run ``fn`` on a worker thread; callbacks run on the UI thread."""
+    signals = _Signals()
+    _live.add(signals)  # keep the QObject alive until a result arrives
 
-    def run(self) -> None:  # pragma: no cover - requires Qt event loop
-        try:
-            updated = self._agent.remediate_and_verify(
-                self._session, self._proposal, approved=True,
-                arguments=self._arguments,
-            )
-            self.finished_ok.emit(updated)
-        except Exception as exc:  # noqa: BLE001
-            self.failed.emit(str(exc))
+    def finish(*_args) -> None:
+        _live.discard(signals)
+
+    if on_done:
+        signals.done.connect(on_done)
+    if on_error:
+        signals.failed.connect(on_error)
+    signals.done.connect(finish)
+    signals.failed.connect(finish)
+    _pool.start(_Task(fn, signals))
+
+
+def wait_for_idle(msecs: int = 30000) -> bool:
+    return _pool.waitForDone(msecs)

@@ -6,14 +6,49 @@ file). Secrets such as API keys are never hard-coded and never logged.
 
 from __future__ import annotations
 
+import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Project root (…/winfix_ai). Used to anchor reports/logs/db locations.
+# Project root (…/winfix_ai). Used when running from source.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+IS_FROZEN = bool(getattr(sys, "frozen", False))
+
+
+def app_dir() -> Path:
+    """Directory containing the running application.
+
+    For a PyInstaller build this is the folder holding ``WinFix.exe`` — not the
+    temporary extraction directory — so a ``.env`` placed next to the
+    executable is found.
+    """
+    if IS_FROZEN:
+        return Path(sys.executable).resolve().parent
+    return PROJECT_ROOT
+
+
+def user_data_dir() -> Path:
+    """Writable location for the database, logs, and reports.
+
+    A frozen app must never write inside its own bundle: PyInstaller extracts
+    one-file builds to a temp directory that is deleted on exit, which would
+    silently discard history and logs. Use the per-user app-data folder there.
+    """
+    override = os.environ.get("WINFIX_DATA_DIR")
+    if override:
+        # Demo mode and the packaged self-test use an isolated folder.
+        return Path(override)
+    if not IS_FROZEN:
+        return PROJECT_ROOT
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_DATA_HOME")
+    root = Path(base) if base else Path.home() / ".local" / "share"
+    return root / "WinFixAI"
+
 
 
 class Settings(BaseSettings):
@@ -24,7 +59,9 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Look for a .env in the working directory and next to the executable,
+        # so a packaged build can be configured without editing the bundle.
+        env_file=(".env", str(app_dir() / ".env")),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -53,14 +90,15 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
 
     # --- Paths -------------------------------------------------------------
-    reports_dir: Path = Field(default=PROJECT_ROOT / "reports")
-    logs_dir: Path = Field(default=PROJECT_ROOT / "logs")
-    database_path: Path = Field(default=PROJECT_ROOT / "winfix.db")
+    reports_dir: Path = Field(default_factory=lambda: user_data_dir() / "reports")
+    logs_dir: Path = Field(default_factory=lambda: user_data_dir() / "logs")
+    database_path: Path = Field(default_factory=lambda: user_data_dir() / "winfix.db")
 
     def ensure_dirs(self) -> None:
         """Create writable directories the app relies on."""
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
     @property
     def llm_enabled(self) -> bool:

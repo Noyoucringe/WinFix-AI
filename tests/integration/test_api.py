@@ -28,7 +28,10 @@ def test_tools_listing(client):
     assert any(not t["read_only"] for t in tools)
 
 
-def test_diagnose_and_full_flow(client):
+def test_diagnose_and_full_flow(client, scenario):
+    from tests.scenarios import STORAGE_AFTER_CLEANUP, STORAGE_FULL
+
+    scenario.use(STORAGE_FULL, after_fix=STORAGE_AFTER_CLEANUP)
     r = client.post("/api/diagnose", json={"problem": "My disk is almost full"})
     assert r.status_code == 200
     body = r.json()
@@ -51,6 +54,11 @@ def test_diagnose_and_full_flow(client):
                      json={"session_id": sid, "tool": tool, "approved": True})
     assert ok.status_code == 200
     assert ok.json()["executed"] is True
+    assert ok.json()["verification"]["checks"]
+
+    # Re-verify reruns the measurements.
+    again = client.post("/api/verify", json={"session_id": sid})
+    assert again.status_code == 200
 
 
 def test_history_endpoint(client):

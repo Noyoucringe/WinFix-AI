@@ -1,8 +1,9 @@
 """Pydantic domain models for WinFix AI.
 
-These model the agent's reasoning artifacts: the diagnostic plan, the
-diagnosis with evidence-backed causes, proposed remediations, verification
-outcomes, and the full session record used for audit/history.
+These model the agent's work products: the diagnostic plan, the evidence
+shown to the user, the diagnosis and its causes, proposed fixes, before/after
+verification, the session timeline, and the full session record kept in
+history.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ def _uuid() -> str:
     return uuid4().hex
 
 
-def _now() -> datetime:
+def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
@@ -28,6 +29,15 @@ class RiskLevel(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+class Level(str, Enum):
+    """Severity of a finding. Always shown with an icon *and* words."""
+
+    OK = "ok"
+    INFO = "info"
+    CAUTION = "caution"
+    CRITICAL = "critical"
 
 
 class SessionStatus(str, Enum):
@@ -43,9 +53,18 @@ class SessionStatus(str, Enum):
     FAILED = "failed"
 
 
-class Category(str, Enum):
-    """Troubleshooting categories the agent can classify a problem into."""
+class SessionResult(str, Enum):
+    """The outcome shown in History."""
 
+    IN_PROGRESS = "in_progress"
+    RESOLVED = "resolved"
+    NOT_RESOLVED = "not_resolved"
+    NO_ISSUE = "no_issue"
+    STOPPED = "stopped"
+    FAILED = "failed"
+
+
+class Category(str, Enum):
     SLOW_COMPUTER = "slow_computer"
     HIGH_CPU = "high_cpu"
     HIGH_MEMORY = "high_memory"
@@ -65,20 +84,37 @@ class Category(str, Enum):
 
 
 class Plan(BaseModel):
-    """A diagnostic plan: which category and which diagnostic tools to run."""
-
     category: Category = Category.UNKNOWN
     summary: str = ""
     diagnostic_tools: list[str] = Field(default_factory=list)
     rationale: str = ""
 
 
-class Cause(BaseModel):
-    """A possible cause with a confidence and the evidence supporting it."""
+class EvidenceCard(BaseModel):
+    """One measured value shown on the Diagnosis screen."""
 
+    key: str
+    label: str
+    icon: str = "info"
+    value: str
+    detail: str = ""
+    level: Level = Level.OK
+    status_text: str = ""
+    progress: float | None = None  # 0..1 meter, when meaningful
+    source: str = ""
+
+
+class Cause(BaseModel):
+    """A possible cause, the evidence for it, and the fix linked to it."""
+
+    id: str = ""
     cause: str
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: list[str] = Field(default_factory=list)
+    detail: str = ""
+    level: Level = Level.CAUTION
+    remediation: str | None = None
+    sources: list[str] = Field(default_factory=list)
 
     @property
     def likelihood_word(self) -> str:
@@ -90,13 +126,20 @@ class Cause(BaseModel):
 
 
 class Diagnosis(BaseModel):
-    """An evidence-backed diagnosis produced from collected diagnostics."""
-
     category: Category = Category.UNKNOWN
     summary: str = ""
+    headline: str = ""
+    short_label: str = ""  # e.g. "Memory pressure" for History rows
+    level: Level = Level.OK
     possible_causes: list[Cause] = Field(default_factory=list)
+    evidence_cards: list[EvidenceCard] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
     recommended_tools: list[str] = Field(default_factory=list)
-    analysis_source: str = "local"  # "local" | "llm"
+    analysis_source: str = "local"  # "local" | "cloud"
+    ai_status: str = "local"        # "local" | "cloud" | "unavailable"
+    ai_message: str = ""
+    checks_completed: int = 0
+    completed_at: datetime | None = None
 
     @property
     def top_cause(self) -> Cause | None:
@@ -104,9 +147,12 @@ class Diagnosis(BaseModel):
             return None
         return max(self.possible_causes, key=lambda c: c.confidence)
 
+    def cause(self, cause_id: str) -> Cause | None:
+        return next((c for c in self.possible_causes if c.id == cause_id), None)
+
 
 class RemediationProposal(BaseModel):
-    """A proposed remediation action awaiting user approval."""
+    """A fix WinFix proposes. Nothing runs until the user approves it."""
 
     tool: str
     title: str
@@ -116,46 +162,135 @@ class RemediationProposal(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     verification_tools: list[str] = Field(default_factory=list)
     consequences: str = ""
+    # Plain-language copy for the Recommended fix screen and approval dialog.
+    change: str = ""
+    summary: str = ""
+    description: str = ""
+    expected_effect: str = ""
+    what_changes: str = ""
+    what_unchanged: str = ""
+    files_affected: str = "Not affected"
+    estimated_time: str = ""
+    risk_note: str = ""
+    steps: list[str] = Field(default_factory=list)
+    technical: str = ""
+    cause_id: str | None = None
+    evidence_backed: bool = True
 
 
 class RemediationOutcome(BaseModel):
-    """The recorded outcome of executing a remediation tool."""
-
     tool: str
     approved: bool = False
     executed: bool = False
     success: bool = False
     result: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
-    timestamp: datetime = Field(default_factory=_now)
+    elevated: bool | None = None
+    approved_at: datetime | None = None
+    finished_at: datetime | None = None
+    timestamp: datetime = Field(default_factory=now_utc)
+
+
+class CheckStatus(str, Enum):
+    IMPROVED = "improved"
+    OK = "ok"
+    UNCHANGED = "unchanged"
+    WORSE = "worse"
+    UNAVAILABLE = "unavailable"
+
+
+class VerificationCheck(BaseModel):
+    """One row of the before/after table."""
+
+    label: str
+    before: str
+    after: str
+    before_level: Level = Level.INFO
+    after_level: Level = Level.INFO
+    status: CheckStatus = CheckStatus.UNCHANGED
 
 
 class VerificationResult(BaseModel):
-    """Whether the problem improved after remediation."""
-
-    improved: bool = False
+    improved: bool = False            # the original issue is resolved
+    action_effective: bool | None = None  # the change itself took effect
+    headline: str = ""
     summary: str = ""
+    found: str = ""
+    note: str = ""
+    checks: list[VerificationCheck] = Field(default_factory=list)
+    remaining_causes: list[str] = Field(default_factory=list)
     before: dict[str, Any] = Field(default_factory=dict)
     after: dict[str, Any] = Field(default_factory=dict)
     metrics: list[str] = Field(default_factory=list)
 
 
+class CheckRecord(BaseModel):
+    """How one diagnostic check went, for progress rows and history."""
+
+    tool: str
+    label: str
+    status: str = "queued"  # queued | running | completed | failed | cancelled
+    summary: str = ""
+    duration_ms: float | None = None
+    source: str = ""
+    error: str = ""
+
+
+class TimelineEvent(BaseModel):
+    at: datetime = Field(default_factory=now_utc)
+    kind: str = "info"  # started | checks | diagnosis | approved | declined | ...
+    title: str
+    detail: str = ""
+
+
+class CloudTransmission(BaseModel):
+    sent: bool = False
+    provider: str | None = None
+    endpoint_host: str | None = None
+    items: list[str] = Field(default_factory=list)
+    at: datetime | None = None
+
+
 class Session(BaseModel):
-    """A full troubleshooting session record (the audit unit)."""
+    """A full troubleshooting session: the unit of history and audit."""
 
     id: str = Field(default_factory=_uuid)
-    created_at: datetime = Field(default_factory=_now)
+    display_id: str = ""
+    created_at: datetime = Field(default_factory=now_utc)
+    finished_at: datetime | None = None
     problem: str = ""
     status: SessionStatus = SessionStatus.CREATED
+    result: SessionResult = SessionResult.IN_PROGRESS
     plan: Plan | None = None
     diagnostics: dict[str, Any] = Field(default_factory=dict)
+    checks: list[CheckRecord] = Field(default_factory=list)
     diagnosis: Diagnosis | None = None
     proposals: list[RemediationProposal] = Field(default_factory=list)
+    approval_status: str = "none"  # none | approved | declined
     remediations: list[RemediationOutcome] = Field(default_factory=list)
     verification: VerificationResult | None = None
+    verifications: list[VerificationResult] = Field(default_factory=list)
+    timeline: list[TimelineEvent] = Field(default_factory=list)
+    cloud: CloudTransmission = Field(default_factory=CloudTransmission)
     final_outcome: str = ""
 
+    def model_post_init(self, _context: Any) -> None:
+        if not self.display_id:
+            self.display_id = "WFX-" + self.created_at.astimezone().strftime("%Y%m%d-%H%M")
+
     def short_diagnosis(self) -> str:
-        if self.diagnosis:
-            return self.diagnosis.summary
-        return ""
+        if not self.diagnosis:
+            return ""
+        if self.diagnosis.short_label:
+            return self.diagnosis.short_label
+        top = self.diagnosis.top_cause
+        return top.cause if top else self.diagnosis.headline
+
+    def add_event(self, kind: str, title: str, detail: str = "") -> TimelineEvent:
+        event = TimelineEvent(kind=kind, title=title, detail=detail)
+        self.timeline.append(event)
+        return event
+
+    @property
+    def changes_made(self) -> int:
+        return sum(1 for r in self.remediations if r.executed and r.success)
