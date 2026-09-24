@@ -33,3 +33,6 @@ settings.json
 elevation/
 *.db-wal
 *.db-shm
+
+# Build environment and outputs
+.venv-build/

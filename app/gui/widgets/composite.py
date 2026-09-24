@@ -198,8 +198,9 @@ class SettingsRow(RowButton):
                          Qt.AlignmentFlag.AlignVCenter)
         self.title = Text(title, "body")
         self.description = Text(description, "caption", "secondary", wrap=True)
-        self.description.setVisible(bool(description))
         layout.addLayout(vbox(self.title, self.description, spacing=2), 1)
+        if not description:
+            self.description.hide()
         if value is not None:
             self.value = Text(value, "body", "secondary")
             layout.addWidget(self.value, 0, Qt.AlignmentFlag.AlignVCenter)

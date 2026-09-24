@@ -99,3 +99,29 @@ def test_no_arbitrary_execution_path_exists():
         assert callable(spec.function)
         # Tool names are simple identifiers, never shell strings.
         assert spec.name.isidentifier()
+
+
+def test_source_has_no_dynamic_code_or_shell_execution():
+    """No eval/exec of strings, no shell=True, no os.system anywhere in the app."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "app"
+    offenders = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                name = func.id if isinstance(func, ast.Name) else \
+                    func.attr if isinstance(func, ast.Attribute) else ""
+                if isinstance(func, ast.Name) and name in ("eval", "exec", "compile"):
+                    offenders.append(f"{path.name}:{node.lineno} {name}()")
+                if isinstance(func, ast.Attribute) and name in ("system", "popen") and \
+                        getattr(func.value, "id", "") == "os":
+                    offenders.append(f"{path.name}:{node.lineno} os.{name}()")
+                for kw in node.keywords:
+                    if kw.arg == "shell" and not (isinstance(kw.value, ast.Constant)
+                                                  and kw.value.value is False):
+                        offenders.append(f"{path.name}:{node.lineno} shell=")
+    assert offenders == []

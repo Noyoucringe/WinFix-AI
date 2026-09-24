@@ -6,10 +6,9 @@ import os
 import subprocess
 import time
 
-import psutil
-
 from app.core.platform_utils import run_command
 from app.core.result import ToolResult
+from app.diagnostics.performance import iter_processes
 from app.remediation._common import restart_service, windows_action
 
 
@@ -21,7 +20,7 @@ def restart_explorer() -> ToolResult:
         time.sleep(1.5)
         # Windows usually relaunches the shell itself; start it if it didn't.
         if not any((p.info.get("name") or "").lower() == "explorer.exe"
-                   for p in psutil.process_iter(["name"])):
+                   for p in iter_processes()):
             windir = os.environ.get("WINDIR", r"C:\Windows")
             subprocess.Popen(  # noqa: S603 - fixed path, no shell
                 [os.path.join(windir, "explorer.exe")],

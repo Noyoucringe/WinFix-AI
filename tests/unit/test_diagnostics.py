@@ -80,3 +80,42 @@ def test_windows_only_tools_degrade():
         if not IS_WINDOWS:
             assert r["success"] is False
             assert r["error"]["type"] == "UnsupportedPlatform"
+
+
+def test_memory_usage_survives_disabled_performance_counters(monkeypatch):
+    """psutil.swap_memory() reads PDH counters; when they're broken the memory
+    check must still report physical memory."""
+    import psutil
+
+    def broken():
+        raise RuntimeError("PdhAddEnglishCounterW failed. Performance counters may be disabled.")
+
+    monkeypatch.setattr(psutil, "swap_memory", broken)
+    from app.diagnostics.performance import get_memory_usage
+
+    r = get_memory_usage()
+    assert r["success"]
+    assert 0 <= r["data"]["usage_percent"] <= 100
+    assert r["data"]["swap_percent"] is None
+
+
+def test_process_scan_skips_processes_windows_wont_describe(monkeypatch):
+    import psutil
+
+    from app.diagnostics import performance
+
+    class Good:
+        pid = 1
+
+        def name(self):
+            return "good.exe"
+
+    class Bad:
+        pid = 2
+
+        def name(self):
+            raise OSError(87, "Invalid parameter")
+
+    monkeypatch.setattr(psutil, "process_iter", lambda *a, **k: iter([Bad(), Good()]))
+    names = [p.info["name"] for p in performance.iter_processes()]
+    assert names == ["good.exe"]

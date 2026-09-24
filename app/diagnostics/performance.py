@@ -65,14 +65,18 @@ def get_memory_usage() -> ToolResult:
 
     def _impl() -> dict:
         memory = psutil.virtual_memory()
-        swap = psutil.swap_memory()
+        try:  # page-file usage comes from performance counters, which can be disabled
+            swap = psutil.swap_memory()
+            swap_percent, swap_total = swap.percent, round(swap.total / _GB, 2)
+        except (RuntimeError, OSError, psutil.Error):
+            swap_percent = swap_total = None
         return {
             "usage_percent": memory.percent,
             "total_gb": round(memory.total / _GB, 2),
             "available_gb": round(memory.available / _GB, 2),
             "used_gb": round((memory.total - memory.available) / _GB, 2),
-            "swap_percent": swap.percent,
-            "swap_total_gb": round(swap.total / _GB, 2),
+            "swap_percent": swap_percent,
+            "swap_total_gb": swap_total,
         }
 
     return run_tool("get_memory_usage", _impl)
@@ -113,13 +117,26 @@ def get_memory_details() -> ToolResult:
     return run_tool("get_memory_details", _impl)
 
 
+def iter_processes():
+    """Like ``psutil.process_iter(["pid", "name"])``, but one process that
+    Windows won't describe (psutil raises OSError for some protected or
+    exiting processes) is skipped instead of aborting the whole scan."""
+    for proc in psutil.process_iter():
+        try:
+            name = proc.name()
+        except (psutil.Error, OSError):
+            continue
+        proc.info = {"pid": proc.pid, "name": name}
+        yield proc
+
+
 def _compressed_memory_mb() -> float | None:
     """Working set of the 'Memory Compression' process, as Task Manager shows.
 
     Optional detail: any failure yields None rather than failing the tool.
     """
     try:
-        for proc in psutil.process_iter(["name"]):
+        for proc in iter_processes():
             if (proc.info.get("name") or "").lower() in ("memory compression",
                                                          "memcompression"):
                 return round(proc.memory_info().rss / _MB, 0)
@@ -188,11 +205,11 @@ def _snapshot() -> tuple[list[dict], set[int]]:
     """Sample every process once, with CPU normalized across all cores."""
     cores = psutil.cpu_count(logical=True) or 1
     tracked = []
-    for proc in psutil.process_iter(["pid", "name"]):
+    for proc in iter_processes():
         try:
             proc.cpu_percent(None)
             tracked.append(proc)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+        except (psutil.Error, OSError):
             continue
     time.sleep(0.5)
     hung = winapi.hung_window_pids()
@@ -216,7 +233,7 @@ def _snapshot() -> tuple[list[dict], set[int]]:
                 "memory_mb": round(mem / _MB, 1),
                 "not_responding": proc.pid in hung,
             })
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        except (psutil.Error, OSError):
             continue
     return procs, hung
 
@@ -309,7 +326,7 @@ def get_unresponsive_apps() -> ToolResult:
                 proc = psutil.Process(pid)
                 apps.append({"pid": pid, "name": proc.name(),
                              "memory_mb": round(proc.memory_info().rss / _MB, 1)})
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (psutil.Error, OSError):
                 continue
         return {"supported": IS_WINDOWS, "count": len(apps), "apps": apps}
 
