@@ -1,1 +1,17 @@
-psutil
+# Core
+psutil>=5.9
+pydantic>=2.5
+pydantic-settings>=2.1
+
+# Backend
+fastapi>=0.110
+uvicorn[standard]>=0.27
+
+# Desktop GUI
+PySide6-Essentials>=6.6
+
+# LLM (cloud providers use the REST API via httpx; no vendor SDK required)
+httpx>=0.26
+
+# Development / testing
+pytest>=8.0

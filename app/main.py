@@ -1,99 +1,125 @@
+"""WinFix AI entrypoint / CLI.
+
+Subcommands:
+
+    gui        Launch the desktop application (default).
+    serve      Start the FastAPI backend.
+    diagnose   Run the agent on a problem and print the diagnosis.
+    tools      List all registered diagnostic and remediation tools.
+    report     Run a broad read-only diagnostic sweep and save a JSON report.
+"""
+
+from __future__ import annotations
+
+import argparse
 import json
 from datetime import datetime
 
-from app.diagnostics.system import get_system_info
-from app.diagnostics.performance import (
-    get_cpu_usage,
-    get_memory_usage
-)
-from app.diagnostics.storage import get_disk_usage
+from app.core.config import get_settings
+from app.core.logging_setup import setup_logging
 
 
-def main():
-    print("=" * 40)
-    print("            WINFIX AI")
-    print("      Windows Diagnostic Engine")
-    print("=" * 40)
+def _cmd_gui(_args: argparse.Namespace) -> int:
+    from app.gui.main_window import main as gui_main
 
-    print("\nCollecting system information...\n")
+    return gui_main()
 
-    # Run diagnostics
-    result = get_system_info()
-    cpu_result = get_cpu_usage()
-    memory_result = get_memory_usage()
-    disk_result = get_disk_usage()
 
-    # Check system diagnostic
-    if not result["success"]:
-        print("✗ Failed to collect system information")
-        print(result["error"])
-        return
+def _cmd_serve(_args: argparse.Namespace) -> int:
+    from app.api.server import run
 
-    # Display system information
-    print("✓ System information collected")
+    run()
+    return 0
 
-    print("\nSystem Information")
-    print("-" * 30)
 
-    for key, value in result["data"].items():
-        print(f"{key}: {value}")
+def _cmd_diagnose(args: argparse.Namespace) -> int:
+    from app.core.agent import Agent
+    from app.core.history import HistoryStore
 
-    # Display CPU information
-    print("\nCPU Information")
-    print("-" * 30)
+    agent = Agent(history=HistoryStore())
+    result = agent.diagnose(args.problem)
+    s = result.session
 
-    if cpu_result["success"]:
-        for key, value in cpu_result["data"].items():
-            print(f"{key}: {value}")
-    else:
-        print("✗ CPU diagnostic failed")
-        print(cpu_result["error"])
+    print(f"\nProblem:   {s.problem}")
+    print(f"Category:  {s.plan.category.value if s.plan else 'unknown'}")
+    print("\nReasoning:")
+    for step in result.steps:
+        print(f"  - {step.message}")
+    print(f"\nDiagnosis: {s.diagnosis.summary if s.diagnosis else 'n/a'}")
+    if s.diagnosis and s.diagnosis.possible_causes:
+        print("\nPossible causes:")
+        for c in s.diagnosis.possible_causes:
+            print(f"  • {c.cause} ({c.likelihood_word}, {c.confidence:.0%})")
+            for e in c.evidence:
+                print(f"      - {e}")
+    if s.proposals:
+        print("\nRecommended fixes (require your approval):")
+        for p in s.proposals:
+            print(f"  • {p.title} [{p.risk_level.value} risk] -> {p.tool}")
+    print(f"\nSession saved with id: {s.id}")
+    return 0
 
-    # Display memory information
-    print("\nMemory Information")
-    print("-" * 30)
 
-    if memory_result["success"]:
-        for key, value in memory_result["data"].items():
-            print(f"{key}: {value}")
-    else:
-        print("✗ Memory diagnostic failed")
-        print(memory_result["error"])
+def _cmd_tools(_args: argparse.Namespace) -> int:
+    from app.core.tool_registry import get_registry
 
-    # Display disk information
-    print("\nDisk Information")
-    print("-" * 30)
+    reg = get_registry()
+    print("Diagnostic tools (read-only):")
+    for s in reg.list_tools(read_only=True):
+        print(f"  {s.name:<32} {s.category:<12} {s.description}")
+    print("\nRemediation tools (require approval):")
+    for s in reg.list_tools(read_only=False):
+        print(f"  {s.name:<32} {s.category:<12} [{s.risk_level.value}] {s.description}")
+    return 0
 
-    if disk_result["success"]:
-        for key, value in disk_result["data"].items():
-            print(f"{key}: {value}")
-    else:
-        print("✗ Disk diagnostic failed")
-        print(disk_result["error"])
 
-    # Create diagnostic report
-    report = {
-        "timestamp": datetime.now().isoformat(),
-        "diagnostics": {
-            "system": result,
-            "cpu": cpu_result,
-            "memory": memory_result,
-            "disk": disk_result
-        }
-    }
+def _cmd_report(_args: argparse.Namespace) -> int:
+    from app.core.diagnostic_engine import DiagnosticEngine
 
-    # Generate report filename
-    filename = (
-        f"reports/diagnostic_"
-        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    settings = get_settings()
+    engine = DiagnosticEngine()
+    tools = ["get_system_info", "get_cpu_usage", "get_memory_usage",
+             "get_disk_usage", "get_network_adapters", "test_dns"]
+    results = engine.run(tools)
+    report = {"timestamp": datetime.now().isoformat(), "diagnostics": results}
+    filename = settings.reports_dir / (
+        f"diagnostic_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     )
+    filename.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"Report saved to: {filename}")
+    return 0
 
-    # Save report
-    with open(filename, "w", encoding="utf-8") as file:
-        json.dump(report, file, indent=4)
 
-    print(f"\n✓ Report saved to: {filename}")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="winfix", description="WinFix AI")
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("gui", help="Launch the desktop application")
+    sub.add_parser("serve", help="Start the FastAPI backend")
+
+    diag = sub.add_parser("diagnose", help="Diagnose a problem")
+    diag.add_argument("problem", help="Describe the problem in natural language")
+
+    sub.add_parser("tools", help="List registered tools")
+    sub.add_parser("report", help="Run a broad diagnostic sweep and save JSON")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    setup_logging()
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    dispatch = {
+        "gui": _cmd_gui,
+        "serve": _cmd_serve,
+        "diagnose": _cmd_diagnose,
+        "tools": _cmd_tools,
+        "report": _cmd_report,
+    }
+    command = args.command or "gui"
+    return dispatch[command](args)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

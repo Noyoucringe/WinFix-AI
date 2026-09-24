@@ -1,7 +1,28 @@
+# Virtual environments
 .venv/
+venv/
+env/
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Secrets / config
 .env
+
+# Editors
 .vscode/
 .idea/
+
+# Generated artifacts
 reports/*.json
+logs/
+*.log
+
+# Local database
+*.db
