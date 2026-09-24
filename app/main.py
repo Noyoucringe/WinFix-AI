@@ -1,6 +1,15 @@
 """WinFix AI entrypoint / CLI.
 
-Subcommands:
+Usage:
+
+    WinFixAI                     Launch the desktop application.
+    WinFixAI --demo              Sample data and simulated fixes (isolated).
+    WinFixAI --self-test [--report FILE] [--screenshots DIR] [--offscreen]
+                                 Exercise every page and the full flow in demo mode.
+    WinFixAI --health-check      Quick read-only check (used at sign-in).
+    WinFixAI --version
+
+Subcommands (for development):
 
     gui        Launch the desktop application (default).
     serve      Start the FastAPI backend.
@@ -19,10 +28,15 @@ from app.core.config import get_settings
 from app.core.logging_setup import setup_logging
 
 
-def _cmd_gui(_args: argparse.Namespace) -> int:
-    from app.gui.main_window import main as gui_main
+def _cmd_gui(args: argparse.Namespace) -> int:
+    from app.gui import app as gui
 
-    return gui_main()
+    if args.self_test:
+        return gui.run_self_test(report=args.report, screenshots=args.screenshots,
+                                 offscreen=args.offscreen)
+    if args.health_check:
+        return gui.run_health_check()
+    return gui.run_gui(demo=args.demo)
 
 
 def _cmd_serve(_args: argparse.Namespace) -> int:
@@ -91,7 +105,22 @@ def _cmd_report(_args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="winfix", description="WinFix AI")
+    from pathlib import Path
+
+    from app import __version__
+
+    parser = argparse.ArgumentParser(prog="WinFixAI", description="WinFix AI")
+    parser.add_argument("--version", action="version", version=f"WinFix AI {__version__}")
+    parser.add_argument("--demo", action="store_true",
+                        help="Use sample data and simulated fixes (nothing is changed)")
+    parser.add_argument("--self-test", action="store_true",
+                        help="Run the automated UI self-test in demo mode and exit")
+    parser.add_argument("--report", type=Path, help="Self-test report file")
+    parser.add_argument("--screenshots", type=Path, help="Folder for self-test screenshots")
+    parser.add_argument("--offscreen", action="store_true",
+                        help="Self-test without showing a window")
+    parser.add_argument("--health-check", action="store_true",
+                        help="Quick read-only health check (used at sign-in)")
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("gui", help="Launch the desktop application")

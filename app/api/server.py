@@ -13,6 +13,7 @@ import platform
 
 from fastapi import FastAPI, HTTPException
 
+from app import __version__
 from app.api.schemas import (
     AgentStepModel,
     ApproveRequest,
@@ -34,7 +35,7 @@ from app.core.safety import ApprovalRequiredError, SafetyError
 from app.core.tool_registry import get_registry
 from app.core.verification_engine import VerificationEngine
 
-app = FastAPI(title="WinFix AI", version="1.0.0")
+app = FastAPI(title="WinFix AI", version=__version__)
 
 _history = HistoryStore()
 

@@ -1,175 +1,308 @@
-"""Design system: color tokens, spacing, and the application stylesheet."""
+"""Design tokens and the application stylesheet (Windows 11 Fluent-inspired).
+
+Colors are the values from the WinFix AI design specification. Light and dark
+are separate palettes (dark mode is designed, not inverted). Widgets read
+colors through the current :class:`Palette`, and the global stylesheet is
+regenerated when the theme changes.
+"""
 
 from __future__ import annotations
 
-# --- Color tokens ---------------------------------------------------------
-BG = "#0B1020"          # app background
-SIDEBAR = "#0E1526"     # navigation rail
-SURFACE = "#151D33"     # cards
-SURFACE_HOVER = "#1C2740"
-BORDER = "#25314F"
-BORDER_SOFT = "#1B2540"
+from dataclasses import dataclass
 
-TEXT = "#EAF0FF"
-TEXT_MUTED = "#8FA0C4"
-TEXT_FAINT = "#64769B"
+from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QColor, QGuiApplication
 
-PRIMARY = "#3B82F6"
-PRIMARY_HOVER = "#2F6FE0"
-PRIMARY_SOFT = "#16264A"
 
-SUCCESS = "#34D399"
-SUCCESS_SOFT = "#0E2E26"
-WARN = "#FBBF24"
-WARN_SOFT = "#332612"
-DANGER = "#F87171"
-DANGER_SOFT = "#3A1A1C"
+@dataclass(frozen=True)
+class Palette:
+    name: str
+    # surfaces
+    mica_start: str
+    mica_end: str
+    layer: str
+    layer_border: str
+    card: str
+    card_border: str
+    card_hover: str
+    card_pressed: str
+    divider: str
+    shadow: tuple[int, int, int, int]
+    smoke: str
+    dialog: str
+    dialog_footer: str
+    # text
+    text: str
+    text_secondary: str
+    text_disabled: str
+    # accent + states
+    accent: str
+    accent_hover: str
+    accent_pressed: str
+    accent_disabled: str
+    on_accent: str
+    accent_text: str
+    success: str
+    caution: str
+    critical: str
+    on_status: str
+    success_bg: str
+    caution_bg: str
+    critical_bg: str
+    info_bg: str
+    # controls
+    control: str
+    control_hover: str
+    control_pressed: str
+    control_border: str
+    control_border_bottom: str
+    subtle_hover: str
+    subtle_pressed: str
+    input: str
+    input_focus: str
+    input_border_bottom: str
+    strong_stroke: str
+    nav_hover: str
+    nav_selected: str
+    focus: str
+    close_hover: str = "#C42B1C"
 
-RISK_COLORS = {
-    "none": SUCCESS,
-    "low": SUCCESS,
-    "medium": WARN,
-    "high": DANGER,
+    def qcolor(self, token: str) -> QColor:
+        return QColor(getattr(self, token))
+
+
+LIGHT = Palette(
+    name="light",
+    mica_start="#E9EEF5", mica_end="#F3F3F3",
+    layer="#F9F9F9", layer_border="#E5E5E5",
+    card="#FFFFFF", card_border="#E5E5E5", card_hover="#F6F6F6", card_pressed="#F2F2F2",
+    divider="rgba(0,0,0,0.08)", shadow=(0, 0, 0, 22),
+    smoke="rgba(0,0,0,0.30)", dialog="#F9F9F9", dialog_footer="#F3F3F3",
+    text="#1A1A1A", text_secondary="#5C5C5C", text_disabled="#A0A0A0",
+    accent="#0067C0", accent_hover="#1975C5", accent_pressed="#3183CA",
+    accent_disabled="#BFBFBF", on_accent="#FFFFFF", accent_text="#005FB8",
+    success="#0F7B0F", caution="#9D5D00", critical="#C42B1C", on_status="#FFFFFF",
+    success_bg="#DFF6DD", caution_bg="#FFF4CE", critical_bg="#FDE7E9", info_bg="#F6F6F6",
+    control="#FDFDFD", control_hover="#F6F6F6", control_pressed="#F2F2F2",
+    control_border="#E5E5E5", control_border_bottom="#CCCCCC",
+    subtle_hover="rgba(0,0,0,0.04)", subtle_pressed="rgba(0,0,0,0.025)",
+    input="#FFFFFF", input_focus="#FFFFFF", input_border_bottom="#8A8A8A",
+    strong_stroke="#8A8A8A",
+    nav_hover="rgba(0,0,0,0.04)", nav_selected="rgba(0,0,0,0.06)",
+    focus="#000000",
+)
+
+DARK = Palette(
+    name="dark",
+    mica_start="#1D2027", mica_end="#202020",
+    layer="#272727", layer_border="#1C1C1C",
+    card="#2D2D2D", card_border="#353535", card_hover="#323232", card_pressed="#2A2A2A",
+    divider="rgba(255,255,255,0.08)", shadow=(0, 0, 0, 70),
+    smoke="rgba(0,0,0,0.40)", dialog="#2B2B2B", dialog_footer="#202020",
+    text="#FFFFFF", text_secondary="#CFCFCF", text_disabled="#787878",
+    accent="#4CC2FF", accent_hover="#47B1E8", accent_pressed="#42A1D2",
+    accent_disabled="#434343", on_accent="#000000", accent_text="#99EBFF",
+    success="#6CCB5F", caution="#FCE100", critical="#FF99A4", on_status="#000000",
+    success_bg="#393D1B", caution_bg="#433519", critical_bg="#442726", info_bg="#2B2B2B",
+    control="#2D2D2D", control_hover="#323232", control_pressed="#272727",
+    control_border="#3A3A3A", control_border_bottom="#3A3A3A",
+    subtle_hover="rgba(255,255,255,0.06)", subtle_pressed="rgba(255,255,255,0.04)",
+    input="#2D2D2D", input_focus="#1F1F1F", input_border_bottom="#9A9A9A",
+    strong_stroke="#9A9A9A",
+    nav_hover="rgba(255,255,255,0.05)", nav_selected="rgba(255,255,255,0.07)",
+    focus="#FFFFFF",
+)
+
+LEVEL_TOKEN = {"ok": "success", "success": "success", "info": "accent",
+               "caution": "caution", "critical": "critical"}
+
+
+# --- typography ----------------------------------------------------------------
+@dataclass(frozen=True)
+class TypeStyle:
+    size: int
+    line: int
+    weight: int  # 400 regular, 600 semibold
+    display: bool = False
+
+
+TYPE = {
+    "title_large": TypeStyle(40, 52, 600, True),
+    "title": TypeStyle(28, 36, 600, True),
+    "subtitle": TypeStyle(20, 28, 600, True),
+    "body_strong": TypeStyle(14, 20, 600),
+    "body": TypeStyle(14, 20, 400),
+    "caption": TypeStyle(12, 16, 400),
+    "value": TypeStyle(28, 36, 600, True),
 }
-RISK_SOFT = {
-    "none": SUCCESS_SOFT,
-    "low": SUCCESS_SOFT,
-    "medium": WARN_SOFT,
-    "high": DANGER_SOFT,
-}
 
-STYLESHEET = f"""
-/* ---- base ---- */
-QWidget {{
-    background-color: {BG};
-    color: {TEXT};
-    font-family: 'Segoe UI Variable', 'Segoe UI', 'Inter', sans-serif;
-    font-size: 14px;
-}}
+TEXT_FAMILIES = ["Segoe UI Variable Text", "Segoe UI", "Open Sans", "Noto Sans",
+                 "DejaVu Sans"]
+DISPLAY_FAMILIES = ["Segoe UI Variable Display", "Segoe UI", "Open Sans", "Noto Sans",
+                    "DejaVu Sans"]
 
-/* Labels and layout containers must never paint their own panel background,
-   otherwise they show as dark rectangles when placed inside a lighter card. */
-QLabel {{
-    background: transparent;
-}}
-QWidget#Transparent {{
-    background: transparent;
-}}
 
-/* ---- typography ---- */
-QLabel#Display  {{ font-size: 32px; font-weight: 700; letter-spacing: -0.5px; }}
-QLabel#Title    {{ font-size: 24px; font-weight: 700; letter-spacing: -0.3px; }}
-QLabel#Heading  {{ font-size: 16px; font-weight: 600; }}
-QLabel#Body     {{ font-size: 14px; color: {TEXT}; }}
-QLabel#Muted    {{ font-size: 13px; color: {TEXT_MUTED}; }}
-QLabel#Faint    {{ font-size: 12px; color: {TEXT_FAINT}; }}
-QLabel#Metric   {{ font-size: 13px; color: {TEXT_MUTED}; }}
-QLabel#Eyebrow  {{
-    font-size: 11px; font-weight: 700; color: {TEXT_FAINT};
-    letter-spacing: 1.2px;
-}}
+def _stylesheet(p: Palette) -> str:
+    return f"""
+* {{ outline: none; }}
+QWidget {{ color: {p.text}; background: transparent; }}
+QWidget#Layer {{ background: {p.layer}; border-top: 1px solid {p.layer_border};
+    border-left: 1px solid {p.layer_border}; border-top-left-radius: 8px; }}
+QToolTip {{ background: {p.card}; color: {p.text}; border: 1px solid {p.card_border};
+    padding: 6px 8px; border-radius: 4px; }}
 
-/* ---- sidebar ---- */
-QFrame#Sidebar {{
-    background-color: {SIDEBAR};
-    border-right: 1px solid {BORDER_SOFT};
-}}
-QLabel#Brand     {{ font-size: 18px; font-weight: 700; }}
-QLabel#BrandMark {{
-    font-size: 17px; font-weight: 800; color: white;
-    background-color: {PRIMARY}; border-radius: 9px;
-}}
-QPushButton#NavItem {{
-    background: transparent;
-    color: {TEXT_MUTED};
-    text-align: left;
-    padding: 11px 14px;
-    border-radius: 9px;
-    font-weight: 600;
-}}
-QPushButton#NavItem:hover {{ background-color: {SURFACE_HOVER}; color: {TEXT}; }}
-QPushButton#NavItem:checked {{ background-color: {PRIMARY_SOFT}; color: {TEXT}; }}
+QLabel[role="secondary"] {{ color: {p.text_secondary}; }}
+QLabel[role="disabled"] {{ color: {p.text_disabled}; }}
+QLabel[role="accent"] {{ color: {p.accent_text}; }}
+QLabel[role="success"] {{ color: {p.success}; }}
+QLabel[role="caution"] {{ color: {p.caution}; }}
+QLabel[role="critical"] {{ color: {p.critical}; }}
 
-/* ---- cards ---- */
-QFrame#Card {{
-    background-color: {SURFACE};
-    border: 1px solid {BORDER};
-    border-radius: 14px;
-}}
-QFrame#Banner {{ border-radius: 14px; border: 1px solid {BORDER}; }}
-QFrame#Divider {{ background-color: {BORDER}; max-height: 1px; border: none; }}
+QFrame#Card {{ background: {p.card}; border: 1px solid {p.card_border}; border-radius: 8px; }}
+QFrame#CardRow {{ background: {p.card}; border: 1px solid {p.card_border}; border-radius: 4px; }}
+QFrame#ListCard {{ background: {p.card}; border: 1px solid {p.card_border}; border-radius: 8px; }}
+QFrame#Divider {{ background: {p.divider}; border: none; }}
+QPushButton#RowButton {{ background: {p.card}; border: 1px solid {p.card_border};
+    border-radius: 4px; text-align: left; padding: 0; min-height: 0px; }}
+QPushButton#RowButton:hover {{ background: {p.card_hover}; }}
+QPushButton#RowButton:pressed {{ background: {p.card_pressed}; }}
+QPushButton#RowButton:focus {{ border: 2px solid {p.focus}; }}
 
-/* ---- inputs ---- */
-QPlainTextEdit, QTextEdit, QLineEdit {{
-    background-color: {BG};
-    border: 1px solid {BORDER};
-    border-radius: 12px;
-    padding: 14px;
-    font-size: 15px;
-    selection-background-color: {PRIMARY};
-}}
-QPlainTextEdit:focus, QTextEdit:focus, QLineEdit:focus {{ border: 1px solid {PRIMARY}; }}
+QPushButton {{ font-size: 14px; min-height: 30px; padding: 0 12px; border-radius: 4px; }}
+QPushButton#Accent {{ background: {p.accent}; color: {p.on_accent};
+    border: 1px solid {p.accent}; }}
+QPushButton#Accent:hover {{ background: {p.accent_hover}; border-color: {p.accent_hover}; }}
+QPushButton#Accent:pressed {{ background: {p.accent_pressed}; border-color: {p.accent_pressed}; }}
+QPushButton#Accent:disabled {{ background: {p.accent_disabled}; border-color: {p.accent_disabled};
+    color: {p.text_disabled if p.name == "dark" else "#FFFFFF"}; }}
+QPushButton#Standard {{ background: {p.control}; color: {p.text};
+    border: 1px solid {p.control_border}; border-bottom-color: {p.control_border_bottom}; }}
+QPushButton#Standard:hover {{ background: {p.control_hover}; }}
+QPushButton#Standard:pressed {{ background: {p.control_pressed}; color: {p.text_secondary}; }}
+QPushButton#Standard:disabled {{ color: {p.text_disabled}; }}
+QPushButton#Subtle {{ background: transparent; color: {p.text}; border: 1px solid transparent; }}
+QPushButton#Subtle:hover {{ background: {p.subtle_hover}; }}
+QPushButton#Subtle:pressed {{ background: {p.subtle_pressed}; color: {p.text_secondary}; }}
+QPushButton#Subtle:disabled {{ color: {p.text_disabled}; }}
+QPushButton#Hyperlink {{ background: transparent; color: {p.accent_text};
+    border: 1px solid transparent; padding: 0 6px; }}
+QPushButton#Hyperlink:hover {{ background: {p.subtle_hover}; }}
+QPushButton#Hyperlink:pressed {{ color: {p.text_secondary}; }}
+QPushButton#Chip {{ background: {p.control}; color: {p.text}; border: 1px solid {p.control_border};
+    border-bottom-color: {p.control_border_bottom}; padding: 0 10px; }}
+QPushButton#Chip:hover {{ background: {p.control_hover}; }}
+QPushButton#Accent:focus, QPushButton#Standard:focus, QPushButton#Subtle:focus,
+QPushButton#Hyperlink:focus, QPushButton#Chip:focus {{ border: 2px solid {p.focus}; }}
 
-/* ---- buttons ---- */
-QPushButton {{
-    background-color: {SURFACE_HOVER};
-    color: {TEXT};
-    border: 1px solid {BORDER};
-    border-radius: 10px;
-    padding: 11px 20px;
-    font-weight: 600;
-}}
-QPushButton:hover  {{ background-color: {BORDER}; }}
-QPushButton:disabled {{ background-color: {SURFACE}; color: {TEXT_FAINT}; border-color: {BORDER_SOFT}; }}
+QPushButton#Caption {{ background: transparent; border: none; border-radius: 0;
+    min-height: 32px; padding: 0; }}
+QPushButton#Caption:hover {{ background: {p.subtle_hover}; }}
+QPushButton#Caption:pressed {{ background: {p.subtle_pressed}; }}
+QPushButton#Close {{ background: transparent; border: none; border-radius: 0;
+    min-height: 32px; padding: 0; }}
+QPushButton#Close:hover {{ background: {p.close_hover}; }}
+QPushButton#Close:pressed {{ background: #C83C31; }}
 
-QPushButton#Primary {{ background-color: {PRIMARY}; border: none; color: white; padding: 12px 24px; }}
-QPushButton#Primary:hover {{ background-color: {PRIMARY_HOVER}; }}
-QPushButton#Danger  {{ background-color: {DANGER}; border: none; color: #2A0B0C; padding: 12px 24px; }}
-QPushButton#Ghost   {{ background: transparent; border: 1px solid {BORDER}; color: {TEXT_MUTED}; }}
-QPushButton#Ghost:hover {{ color: {TEXT}; background-color: {SURFACE_HOVER}; }}
+QLineEdit, QPlainTextEdit {{ background: {p.input}; color: {p.text}; font-size: 14px;
+    border: 1px solid {p.control_border}; border-bottom: 1px solid {p.input_border_bottom};
+    border-radius: 4px; padding: 5px 10px; selection-background-color: {p.accent};
+    selection-color: {p.on_accent}; }}
+QLineEdit:hover {{ background: {p.control_hover}; }}
+QLineEdit:focus {{ background: {p.input_focus}; border-bottom: 2px solid {p.accent}; }}
+QLineEdit[error="true"] {{ border-bottom: 2px solid {p.critical}; }}
+QLineEdit:disabled {{ color: {p.text_disabled}; }}
 
-/* Example-problem chips on the home screen */
-QPushButton#Chip {{
-    background-color: {SURFACE};
-    border: 1px solid {BORDER};
-    color: {TEXT_MUTED};
-    text-align: left;
-    padding: 12px 14px;
-    font-weight: 500;
-    border-radius: 10px;
-}}
-QPushButton#Chip:hover {{ border-color: {PRIMARY}; color: {TEXT}; background-color: {SURFACE_HOVER}; }}
+QComboBox {{ background: {p.control}; color: {p.text}; border: 1px solid {p.control_border};
+    border-bottom-color: {p.control_border_bottom}; border-radius: 4px; padding: 4px 10px;
+    min-height: 22px; font-size: 14px; }}
+QComboBox:hover {{ background: {p.control_hover}; }}
+QComboBox:focus {{ border: 2px solid {p.focus}; }}
+QComboBox::drop-down {{ border: none; width: 28px; }}
+QComboBox::down-arrow {{ image: none; }}
+QComboBox QAbstractItemView {{ background: {p.dialog}; color: {p.text};
+    border: 1px solid {p.card_border}; border-radius: 8px; padding: 4px; outline: none;
+    selection-background-color: {p.nav_selected}; selection-color: {p.text}; }}
+QComboBox QAbstractItemView::item {{ min-height: 32px; padding: 0 10px; border-radius: 4px; }}
 
-/* ---- lists ---- */
-QListWidget {{
-    background-color: transparent;
-    border: none;
-    outline: none;
-}}
-QListWidget::item {{
-    padding: 11px 12px;
-    border-radius: 9px;
-    color: {TEXT_MUTED};
-    margin-bottom: 3px;
-}}
-QListWidget::item:selected {{ background-color: {PRIMARY_SOFT}; color: {TEXT}; }}
-QListWidget#Steps::item {{ color: {TEXT}; }}
+QCheckBox {{ spacing: 8px; font-size: 14px; }}
+QRadioButton {{ spacing: 8px; font-size: 14px; }}
 
-/* ---- progress bar (confidence) ---- */
-QProgressBar {{
-    background-color: {BG};
-    border: none;
-    border-radius: 4px;
-    height: 7px;
-    text-align: center;
-}}
-QProgressBar::chunk {{ background-color: {PRIMARY}; border-radius: 4px; }}
-
-/* ---- scrollbars ---- */
-QScrollArea {{ border: none; background: transparent; }}
-QScrollBar:vertical {{ background: transparent; width: 10px; margin: 4px; }}
-QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; min-height: 30px; }}
-QScrollBar::handle:vertical:hover {{ background: {TEXT_FAINT}; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+QScrollArea {{ background: transparent; border: none; }}
+QScrollArea > QWidget > QWidget {{ background: transparent; }}
+QScrollBar:vertical {{ background: transparent; width: 12px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: {p.strong_stroke}; border-radius: 3px;
+    min-height: 32px; margin: 0 3px; }}
+QScrollBar::handle:vertical:hover {{ margin: 0 2px; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+QScrollBar:horizontal {{ height: 0; }}
+
+QTableWidget {{ background: {p.card}; border: 1px solid {p.card_border}; border-radius: 8px;
+    gridline-color: transparent; font-size: 14px; selection-background-color: {p.nav_selected};
+    selection-color: {p.text}; }}
+QTableWidget::item {{ padding: 0 8px; border-bottom: 1px solid {p.divider}; }}
+QHeaderView::section {{ background: {p.card}; color: {p.text_secondary}; font-size: 12px;
+    border: none; border-bottom: 1px solid {p.divider}; padding: 8px 8px; }}
+QHeaderView::section:hover {{ color: {p.text}; }}
+
+QMenu {{ background: {p.dialog}; color: {p.text}; border: 1px solid {p.card_border};
+    border-radius: 8px; padding: 4px; }}
+QMenu::item {{ padding: 6px 12px; border-radius: 4px; }}
+QMenu::item:selected {{ background: {p.nav_selected}; }}
 """
+
+
+class ThemeManager(QObject):
+    """Holds the active palette; resolves "system" from Windows' app mode."""
+
+    changed = Signal(object)  # Palette
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.mode = "system"
+        self.palette = LIGHT
+
+    @staticmethod
+    def system_is_dark() -> bool:
+        from app.core import winapi
+
+        light = winapi.apps_use_light_theme()
+        if light is not None:
+            return not light
+        app = QGuiApplication.instance()
+        if app is not None:
+            try:
+                from PySide6.QtCore import Qt
+
+                return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+            except AttributeError:
+                return False
+        return False
+
+    def apply(self, mode: str) -> Palette:
+        self.mode = mode
+        dark = mode == "dark" or (mode == "system" and self.system_is_dark())
+        self.palette = DARK if dark else LIGHT
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.setStyleSheet(_stylesheet(self.palette))
+        self.changed.emit(self.palette)
+        return self.palette
+
+
+_manager: ThemeManager | None = None
+
+
+def manager() -> ThemeManager:
+    global _manager
+    if _manager is None:
+        _manager = ThemeManager()
+    return _manager
+
+
+def palette() -> Palette:
+    return manager().palette
+
+
+def status_color(level: str) -> QColor:
+    return palette().qcolor(LEVEL_TOKEN.get(level, "text_secondary"))

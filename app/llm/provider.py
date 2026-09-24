@@ -151,6 +151,18 @@ class CloudProvider(LLMProvider):
                                                    endpoint_host=host, items=merged,
                                                    at=now_utc())
 
+    def test_connection(self) -> tuple[bool, str]:
+        """Send a tiny fixed prompt (no diagnostic data) to check the settings."""
+        if not self._api_key:
+            return False, "Add an API key first."
+        try:
+            reply = self._chat("Reply with the single word OK.", "Connection test")
+        except Exception as exc:  # noqa: BLE001 - reported to the user, key never included
+            return False, connection_error_message(exc)
+        if not (reply or "").strip():
+            return False, "The provider answered, but the reply was empty. Check the model name."
+        return True, f"Connected to {urlparse(self.endpoint).hostname} using {self.model}."
+
     # --- analysis -----------------------------------------------------------
     def analyze(self, problem: str, category: Category,
                 results: dict[str, Any]) -> Diagnosis:
@@ -220,6 +232,25 @@ class CloudProvider(LLMProvider):
                            extra={"component": "llm", "event": "fallback",
                                   "status": type(exc).__name__})
             return local_follow_ups(session, candidates)
+
+
+def connection_error_message(exc: Exception) -> str:
+    """A user-facing explanation that never echoes request headers or keys."""
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status in (401, 403):
+        return "The provider rejected the API key."
+    if status == 404:
+        return "The endpoint or model wasn't found. Check the address and model name."
+    if status == 429:
+        return "The provider is rate limiting requests. Try again in a minute."
+    if status:
+        return f"The provider returned an error (HTTP {status})."
+    name = type(exc).__name__
+    if "Timeout" in name:
+        return "The provider didn't answer in time."
+    if "Connect" in name or isinstance(exc, OSError):
+        return "Couldn't reach the endpoint. Check the address and your internet connection."
+    return "The connection test failed."
 
 
 def parse_tool_selection(text: str) -> list[str]:

@@ -39,14 +39,16 @@ def user_data_dir() -> Path:
     one-file builds to a temp directory that is deleted on exit, which would
     silently discard history and logs. Use the per-user app-data folder there.
     """
+    override = os.environ.get("WINFIX_DATA_DIR")
+    if override:
+        # Demo mode and the packaged self-test use an isolated folder.
+        return Path(override)
     if not IS_FROZEN:
         return PROJECT_ROOT
     base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_DATA_HOME")
     root = Path(base) if base else Path.home() / ".local" / "share"
     return root / "WinFixAI"
 
-
-_DATA_DIR = user_data_dir()
 
 
 class Settings(BaseSettings):
@@ -88,9 +90,9 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
 
     # --- Paths -------------------------------------------------------------
-    reports_dir: Path = Field(default=_DATA_DIR / "reports")
-    logs_dir: Path = Field(default=_DATA_DIR / "logs")
-    database_path: Path = Field(default=_DATA_DIR / "winfix.db")
+    reports_dir: Path = Field(default_factory=lambda: user_data_dir() / "reports")
+    logs_dir: Path = Field(default_factory=lambda: user_data_dir() / "logs")
+    database_path: Path = Field(default_factory=lambda: user_data_dir() / "winfix.db")
 
     def ensure_dirs(self) -> None:
         """Create writable directories the app relies on."""

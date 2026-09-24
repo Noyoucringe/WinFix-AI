@@ -109,3 +109,37 @@ def test_provider_repr_never_contains_the_key():
 
 def test_local_is_default_provider():
     assert provider_module.get_provider().name == "local"
+
+
+def test_connection_test_errors_never_include_the_key():
+    import httpx
+
+    from app.llm.provider import OpenAICompatibleProvider
+
+    secret = "sk-live-SECRETSECRETSECRET1234"
+    provider = OpenAICompatibleProvider(endpoint="https://api.example.com/v1",
+                                        model="m", api_key=secret)
+
+    def fail(system, user):
+        request = httpx.Request("POST", "https://api.example.com/v1/chat/completions",
+                                headers={"Authorization": f"Bearer {secret}"})
+        raise httpx.HTTPStatusError(f"401 for {secret}", request=request,
+                                    response=httpx.Response(401, request=request))
+
+    provider._chat = fail
+    ok, message = provider.test_connection()
+    assert not ok
+    assert message == "The provider rejected the API key."
+    assert secret not in message and secret not in repr(provider)
+
+
+def test_connection_test_sends_no_diagnostic_data():
+    from app.llm.provider import OpenAICompatibleProvider
+
+    sent = []
+    provider = OpenAICompatibleProvider(endpoint="https://api.example.com/v1",
+                                        model="m", api_key="k" * 20)
+    provider._chat = lambda system, user: sent.append((system, user)) or "OK"
+    ok, _message = provider.test_connection()
+    assert ok
+    assert sent == [("Reply with the single word OK.", "Connection test")]

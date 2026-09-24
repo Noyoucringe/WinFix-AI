@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app import __version__
 from app.core.models import Session, SessionResult
 from app.knowledge.checks import info as check_info
 
@@ -19,7 +20,7 @@ def _time(dt) -> str:
     return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S") if dt else "—"
 
 
-def session_report(session: Session, *, app_version: str = "1.0.0") -> str:
+def session_report(session: Session, *, app_version: str | None = None) -> str:
     lines = [
         "WinFix AI — troubleshooting report",
         "=" * 36,
@@ -30,7 +31,7 @@ def session_report(session: Session, *, app_version: str = "1.0.0") -> str:
         f"Problem:      \"{session.problem}\"",
         f"Analysis:     {'Cloud (' + (session.cloud.provider or '') + ')' if session.cloud.sent else 'On this PC'}",
         f"Sent to cloud: {', '.join(session.cloud.items) if session.cloud.sent else 'Nothing'}",
-        f"WinFix AI version: {app_version}",
+        f"WinFix AI version: {app_version or __version__}",
         "",
     ]
     if session.diagnosis:
