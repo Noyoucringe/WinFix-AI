@@ -53,7 +53,6 @@ def _load_session(session_id: str) -> Session:
 
 @app.get("/api/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    settings = get_settings()
     reg = get_registry()
     from app.llm.provider import get_provider
 

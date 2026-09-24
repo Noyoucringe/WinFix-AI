@@ -9,7 +9,7 @@ unregistered or unsafe tool name can never enter the plan.
 from __future__ import annotations
 
 from app.core.logging_setup import get_logger
-from app.core.models import Category, Plan
+from app.core.models import Plan
 from app.core.safety import SafetyValidator
 from app.core.tool_registry import get_registry
 from app.knowledge.categories import get_category_spec

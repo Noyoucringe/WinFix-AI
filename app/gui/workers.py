@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QThread, Signal
 
-from app.core.agent import Agent, AgentStep
+from app.core.agent import Agent
 from app.core.models import RemediationProposal, Session
 
 

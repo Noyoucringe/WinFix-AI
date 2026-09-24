@@ -6,7 +6,6 @@ the UI never freezes. All remediation goes through the standard approval gate.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,

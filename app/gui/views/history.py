@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.history import HistoryStore
-from app.gui.widgets import muted, title_label
+from app.gui.widgets import title_label
 
 
 class HistoryView(QWidget):

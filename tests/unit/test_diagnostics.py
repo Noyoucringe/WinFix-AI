@@ -4,8 +4,6 @@ psutil-based tools run everywhere; Windows-only tools degrade gracefully.
 Every tool must honour the result contract and never raise.
 """
 
-import pytest
-
 from app.core.result import ToolResult
 from app.diagnostics import network, performance, storage, system
 

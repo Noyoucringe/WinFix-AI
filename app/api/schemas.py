@@ -10,7 +10,6 @@ from app.core.models import (
     Diagnosis,
     Plan,
     RemediationProposal,
-    Session,
     VerificationResult,
 )
 

@@ -7,7 +7,7 @@ are rejected, and the agent/remediation loops are bounded.
 
 import pytest
 
-from app.core.models import Diagnosis, Category, RemediationProposal
+from app.core.models import RemediationProposal
 from app.core.remediation_engine import RemediationEngine
 from app.core.safety import (
     ApprovalRequiredError,

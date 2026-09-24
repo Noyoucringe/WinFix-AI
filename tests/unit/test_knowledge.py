@@ -5,7 +5,7 @@ import pytest
 from app.core.models import Category
 from app.core.result import success_result
 from app.knowledge import troubleshooting
-from app.knowledge.categories import CATEGORIES, classify, get_category_spec
+from app.knowledge.categories import CATEGORIES, classify
 
 
 @pytest.mark.parametrize("problem,expected", [
