@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timezone
 from typing import Any
@@ -20,6 +21,21 @@ _CONFIGURED = False
 # Keys that carry structured context beyond the standard LogRecord attributes.
 _CONTEXT_KEYS = ("component", "event", "tool", "duration_ms", "status")
 
+# Defense in depth: even if a secret reaches a log call by mistake, it is
+# masked before anything is written.
+_SECRETS = [
+    (re.compile(r"(?i)\bsk-(?:ant-)?[A-Za-z0-9_\-]{12,}"), "<secret>"),
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{12,}"), r"\1<secret>"),
+    (re.compile(r"(?i)(x-api-key|api[_-]?key|authorization|password|passwd|token|secret)"
+                r"([\"']?\s*[:=]\s*[\"']?)[^\s\"',}]+"), r"\1\2<secret>"),
+]
+
+
+def redact_secrets(text: str) -> str:
+    for pattern, replacement in _SECRETS:
+        text = pattern.sub(replacement, text)
+    return text
+
 
 class JsonFormatter(logging.Formatter):
     """Format log records as compact JSON lines."""
@@ -29,14 +45,14 @@ class JsonFormatter(logging.Formatter):
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": redact_secrets(record.getMessage()),
         }
         for key in _CONTEXT_KEYS:
             value = getattr(record, key, None)
             if value is not None:
-                payload[key] = value
+                payload[key] = redact_secrets(value) if isinstance(value, str) else value
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = redact_secrets(self.formatException(record.exc_info))
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 

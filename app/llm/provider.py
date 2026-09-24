@@ -1,79 +1,110 @@
-"""LLM provider interface and implementations.
+"""LLM providers.
 
-Design goals:
+* ``LocalProvider`` — always available, no network: offline classifier,
+  rule-based follow-up checks and the deterministic analyzer.
+* ``OpenAICompatibleProvider`` / ``AnthropicProvider`` — optional cloud
+  analysis, configured in Settings > AI provider.
 
-* One abstraction (:class:`LLMProvider`) — no vendor names leak into the rest
-  of the app.
-* The ``local`` provider is always available and needs no network/key.
-* Cloud providers *degrade gracefully*: any error (missing key, network,
-  malformed response) falls back to the deterministic local analysis so the
-  product never breaks because the LLM is unavailable.
-* The LLM only ever *selects* tool names or *interprets* evidence. It never
-  produces code to run — tool selections are validated against the registry.
+Everything an LLM returns is untrusted. It may only (a) name read-only tools,
+which the agent validates against the registry before running, or (b) rephrase
+the diagnosis summary, which is length- and content-checked. It never sees raw
+diagnostics — only the sanitized payload from ``app.core.privacy``. Any
+failure falls back to local analysis and the user is told so.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
-from app.core.config import Settings, get_settings
 from app.core.logging_setup import get_logger
-from app.core.models import Category, Diagnosis
+from app.core.models import Category, CloudTransmission, Diagnosis, now_utc
+from app.core.platform_utils import IS_WINDOWS
 from app.knowledge import categories as knowledge
+from app.knowledge import evidence as ev
 from app.knowledge import troubleshooting
 
 logger = get_logger(__name__)
 
+AI_UNAVAILABLE = "AI analysis is unavailable, but local diagnostics are still available."
+MAX_FOLLOW_UPS = 3
+MAX_REQUESTS = 10
+_UNSAFE_TEXT = re.compile(r"(?i)(```|powershell|cmd\.exe|reg\s+(add|delete)|rm\s+-rf|"
+                          r"invoke-|iex\b|http[s]?://|<script)")
 
-@dataclass
-class LLMResponse:
-    text: str = ""
-    tool_calls: list[str] = field(default_factory=list)
-    source: str = "local"
+# Tools that only return data on Windows; never worth a step elsewhere.
+_WINDOWS_ONLY = {"get_search_indexer_status", "get_unresponsive_apps",
+                 "get_network_services_status", "get_pending_reboot", "get_startup_apps",
+                 "get_important_services", "get_problem_devices", "get_bluetooth_devices"}
+
+
+class LLMError(Exception):
+    pass
 
 
 class LLMProvider(ABC):
-    """Base class for all providers."""
-
     name = "base"
+    label = "Base"
+    last_transmission: CloudTransmission | None = None
 
     @property
     @abstractmethod
     def available(self) -> bool:
-        """Whether this provider can currently be used."""
+        ...
 
     def classify(self, problem: str) -> Category:
-        """Classify a problem into a troubleshooting category.
-
-        Default implementation uses the offline keyword classifier. Cloud
-        providers may override for better accuracy.
-        """
         return knowledge.classify(problem)
 
     def suggest_tools(self, problem: str, category: Category,
                       candidate_tools: list[str]) -> list[str]:
-        """Return the diagnostic tools relevant to the problem.
-
-        Default: the category's declared diagnostic tools (intersected with
-        what is registered). Cloud providers may refine this.
-        """
         spec = knowledge.get_category_spec(category)
         if spec:
             return [t for t in spec.diagnostic_tools if t in candidate_tools]
-        return candidate_tools[:6]
+        return []  # the planner falls back to a broad general sweep
+
+    def follow_up_tools(self, session, candidates: list[str]) -> list[str]:
+        return local_follow_ups(session, candidates)
 
     @abstractmethod
     def analyze(self, problem: str, category: Category,
                 results: dict[str, Any]) -> Diagnosis:
-        """Interpret collected diagnostics into a diagnosis."""
+        ...
+
+
+def local_follow_ups(session, candidates: list[str]) -> list[str]:
+    """Evidence-driven extra checks: look closer where the numbers point."""
+    results = session.diagnostics
+    category = session.plan.category if session.plan else Category.UNKNOWN
+    wanted: list[str] = []
+    memory = ev.memory(results)
+    if memory and memory["percent"] >= troubleshooting.MEMORY_HIGH:
+        wanted += ["get_search_indexer_status", "get_unresponsive_apps", "get_memory_details"]
+    cpu = ev.cpu(results)
+    if cpu and cpu["percent"] >= troubleshooting.CPU_ELEVATED:
+        wanted += ["get_top_cpu_processes", "get_search_indexer_status"]
+    disk = ev.disk(results)
+    if disk and disk["low"]:
+        wanted += ["get_reclaimable_space"]
+    net = ev.network(results)
+    if net["gateway_reachable"] is False:
+        wanted += ["get_ip_configuration", "get_network_profile"]
+    if net["dns_working"] is False:
+        wanted += ["get_network_services_status"]
+    if category == Category.WINDOWS_UPDATE:
+        wanted += ["test_internet"]
+    if not IS_WINDOWS:
+        wanted = [t for t in wanted if t not in _WINDOWS_ONLY]
+    return [t for t in dict.fromkeys(wanted) if t in candidates][:MAX_FOLLOW_UPS]
 
 
 class LocalProvider(LLMProvider):
-    """Offline provider using deterministic heuristics. Always available."""
+    """On-device analysis. Nothing leaves the PC."""
 
     name = "local"
+    label = "Local"
 
     @property
     def available(self) -> bool:
@@ -81,138 +112,192 @@ class LocalProvider(LLMProvider):
 
     def analyze(self, problem: str, category: Category,
                 results: dict[str, Any]) -> Diagnosis:
-        return troubleshooting.analyze(category, results)
+        diagnosis = troubleshooting.analyze(category, results)
+        diagnosis.ai_status = "local"
+        return diagnosis
 
 
-class _CloudProvider(LLMProvider):
-    """Shared logic for HTTP-based cloud providers."""
+class CloudProvider(LLMProvider):
+    """Shared logic for HTTP providers. Subclasses implement ``_chat``."""
 
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
+    def __init__(self, *, endpoint: str, model: str, api_key: str | None,
+                 send_process_names: bool = True, send_event_excerpts: bool = False,
+                 timeout: float = 30.0) -> None:
+        self.endpoint = endpoint.rstrip("/")
+        self.model = model
+        self._api_key = api_key
+        self.send_process_names = send_process_names
+        self.send_event_excerpts = send_event_excerpts
+        self.timeout = timeout
         self._local = LocalProvider()
+        self.last_transmission = None
 
-    def _chat(self, system: str, user: str) -> str:  # pragma: no cover - network
-        raise NotImplementedError
+    @property
+    def available(self) -> bool:
+        return bool(self._api_key and self.endpoint and self.model)
 
+    def __repr__(self) -> str:  # never leak the key through repr/logging
+        return f"{type(self).__name__}(endpoint={self.endpoint!r}, model={self.model!r})"
+
+    @abstractmethod
+    def _chat(self, system: str, user: str) -> str:
+        ...
+
+    def _record(self, items: list[str]) -> None:
+        host = urlparse(self.endpoint).hostname
+        previous = self.last_transmission
+        merged = sorted(set(items) | set(previous.items if previous else []))
+        self.last_transmission = CloudTransmission(sent=True, provider=self.label,
+                                                   endpoint_host=host, items=merged,
+                                                   at=now_utc())
+
+    # --- analysis -----------------------------------------------------------
     def analyze(self, problem: str, category: Category,
                 results: dict[str, Any]) -> Diagnosis:
-        # Always compute the local baseline first — it is our fallback and our
-        # evidence source. The LLM refines the *explanation*, not the facts.
-        baseline = self._local.analyze(problem, category, results)
+        diagnosis = self._local.analyze(problem, category, results)
         if not self.available:
-            return baseline
-        try:
-            summary = self._llm_summary(problem, category, baseline)
-            if summary:
-                baseline.summary = summary
-                baseline.analysis_source = "llm"
-        except Exception as exc:  # noqa: BLE001 - never break on LLM failure
-            logger.warning(
-                "LLM analysis failed; using local baseline",
-                extra={"component": "llm", "event": "fallback", "status": str(exc)},
-            )
-        return baseline
+            diagnosis.ai_status, diagnosis.ai_message = "unavailable", AI_UNAVAILABLE
+            return diagnosis
+        from app.core.privacy import build_payload
 
-    def _llm_summary(self, problem: str, category: Category,
-                     baseline: Diagnosis) -> str:  # pragma: no cover - network
-        evidence_lines = []
-        for c in baseline.possible_causes[:4]:
-            evidence_lines.append(f"- {c.cause} (confidence {c.confidence:.2f})")
-            evidence_lines.extend(f"    * {e}" for e in c.evidence)
+        payload, items = build_payload(
+            problem, category, diagnosis, results,
+            include_process_names=self.send_process_names,
+            include_event_excerpts=self.send_event_excerpts)
         system = (
-            "You are a careful Windows troubleshooting assistant. Given a user "
-            "problem and evidence gathered by diagnostic tools, write a concise, "
-            "plain-language summary (2-3 sentences). Base every claim on the "
-            "evidence. Use hedged language ('likely', 'possible'). Do NOT invent "
-            "numbers. Do NOT suggest running commands."
-        )
-        user = (
-            f"Problem: {problem}\nCategory: {category.value}\n\n"
-            f"Evidence and candidate causes:\n" + "\n".join(evidence_lines)
-        )
-        return self._chat(system, user).strip()
+            "You explain Windows troubleshooting results to a non-technical user. "
+            "You receive measurements and findings from read-only diagnostics. Write a "
+            "2-3 sentence plain-text summary of what is most likely wrong. Base every "
+            "claim on the findings; use hedged words (likely, possible). Do not invent "
+            "numbers. Do not give commands, code, links or registry edits.")
+        try:
+            self._record(items)
+            text = self._chat(system, json.dumps(payload))
+            diagnosis.summary = self._validate_summary(text)
+            diagnosis.analysis_source = diagnosis.ai_status = "cloud"
+        except Exception as exc:  # noqa: BLE001 - AI must never break diagnosis
+            logger.warning("cloud analysis failed; using local result",
+                           extra={"component": "llm", "event": "fallback",
+                                  "status": type(exc).__name__})
+            diagnosis.ai_status, diagnosis.ai_message = "unavailable", AI_UNAVAILABLE
+        return diagnosis
+
+    @staticmethod
+    def _validate_summary(text: str) -> str:
+        text = (text or "").strip()
+        if not text or len(text) > 700 or _UNSAFE_TEXT.search(text):
+            raise LLMError("Summary rejected by output validation")
+        return text
+
+    # --- tool calling -------------------------------------------------------
+    def follow_up_tools(self, session, candidates: list[str]) -> list[str]:
+        """Let the model choose extra read-only checks from registered schemas."""
+        if not self.available or not candidates:
+            return local_follow_ups(session, candidates)
+        from app.core.privacy import build_payload
+        from app.core.tool_registry import get_registry
+
+        registry = get_registry()
+        schemas = [registry.get_tool(t).json_schema() for t in candidates
+                   if registry.has(t) and registry.get_tool(t).read_only]
+        interim = troubleshooting.analyze(session.plan.category, session.diagnostics)
+        payload, items = build_payload(
+            session.problem, session.plan.category, interim, session.diagnostics,
+            include_process_names=self.send_process_names,
+            include_event_excerpts=self.send_event_excerpts)
+        system = (
+            "You are choosing extra read-only diagnostic checks for a Windows PC. Reply "
+            'with JSON only: {"tools": ["tool_name", ...]} using at most 3 names from '
+            "the provided list, or an empty list if no more checks are useful.")
+        user = json.dumps({"evidence": payload, "available_tools": schemas})
+        try:
+            self._record(items)
+            # Return everything (bounded) so the agent validates and logs each
+            # request; the agent enforces how many may actually run.
+            return parse_tool_selection(self._chat(system, user))[:MAX_REQUESTS]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("cloud tool selection failed; using local rules",
+                           extra={"component": "llm", "event": "fallback",
+                                  "status": type(exc).__name__})
+            return local_follow_ups(session, candidates)
 
 
-class OpenAIProvider(_CloudProvider):
+def parse_tool_selection(text: str) -> list[str]:
+    """Parse ``{"tools": [...]}`` from model output. Anything else is rejected.
+
+    Names are returned as-is: the agent's safety validator decides whether
+    each one may run.
+    """
+    match = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if not match:
+        raise LLMError("No JSON object in model output")
+    data = json.loads(match.group(0))
+    tools = data.get("tools") if isinstance(data, dict) else None
+    if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
+        raise LLMError("Model output did not contain a list of tool names")
+    return [t.strip()[:80] for t in tools]
+
+
+class OpenAICompatibleProvider(CloudProvider):
     name = "openai"
-
-    @property
-    def available(self) -> bool:
-        return bool(self.settings.openai_api_key)
+    label = "OpenAI-compatible"
 
     def _chat(self, system: str, user: str) -> str:  # pragma: no cover - network
         import httpx
 
-        model = self.settings.model_name or "gpt-4o-mini"
-        resp = httpx.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {self.settings.openai_api_key}"},
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "temperature": 0.2,
-            },
-            timeout=self.settings.llm_timeout_seconds,
+        response = httpx.post(
+            f"{self.endpoint}/chat/completions",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json={"model": self.model, "temperature": 0.2, "max_tokens": 400,
+                  "messages": [{"role": "system", "content": system},
+                               {"role": "user", "content": user}]},
+            timeout=self.timeout,
         )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
 
 
-class AnthropicProvider(_CloudProvider):
+class AnthropicProvider(CloudProvider):
     name = "anthropic"
-
-    @property
-    def available(self) -> bool:
-        return bool(self.settings.anthropic_api_key)
+    label = "Anthropic-compatible"
 
     def _chat(self, system: str, user: str) -> str:  # pragma: no cover - network
         import httpx
 
-        model = self.settings.model_name or "claude-sonnet-5"
-        resp = httpx.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": self.settings.anthropic_api_key or "",
-                "anthropic-version": "2023-06-01",
-            },
-            json={
-                "model": model,
-                "max_tokens": 512,
-                "system": system,
-                "messages": [{"role": "user", "content": user}],
-            },
-            timeout=self.settings.llm_timeout_seconds,
+        base = self.endpoint[:-3] if self.endpoint.endswith("/v1") else self.endpoint
+        response = httpx.post(
+            f"{base}/v1/messages",
+            headers={"x-api-key": self._api_key or "", "anthropic-version": "2023-06-01"},
+            json={"model": self.model, "max_tokens": 400, "system": system,
+                  "messages": [{"role": "user", "content": user}]},
+            timeout=self.timeout,
         )
-        resp.raise_for_status()
-        blocks = resp.json().get("content", [])
-        return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        response.raise_for_status()
+        return "".join(b.get("text", "") for b in response.json().get("content", [])
+                       if b.get("type") == "text")
 
 
-def get_provider(settings: Settings | None = None) -> LLMProvider:
-    """Return the configured provider, falling back to local on any problem."""
-    settings = settings or get_settings()
-    provider_name = (settings.llm_provider or "local").lower()
-    try:
-        if provider_name == "openai":
-            provider = OpenAIProvider(settings)
-        elif provider_name == "anthropic":
-            provider = AnthropicProvider(settings)
-        else:
-            provider = LocalProvider()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "provider init failed; using local",
-            extra={"component": "llm", "event": "init_fallback", "status": str(exc)},
-        )
+def get_provider(settings=None) -> LLMProvider:
+    """The provider selected in Settings (or via environment for development)."""
+    from app.core import credentials
+    from app.core.config import get_settings
+    from app.core.user_settings import get_store
+
+    user = settings or get_store().load()
+    env = get_settings()
+    analysis, provider_type = user.analysis, user.provider_type
+    if analysis == "local" and env.llm_provider.lower() in ("openai", "anthropic"):
+        analysis, provider_type = "cloud", env.llm_provider.lower()
+    if analysis != "cloud":
         return LocalProvider()
-
-    if not provider.available:
-        logger.info(
-            "configured provider unavailable; using local",
-            extra={"component": "llm", "event": "unavailable"},
-        )
-        return LocalProvider()
-    return provider
+    cls = AnthropicProvider if provider_type == "anthropic" else OpenAICompatibleProvider
+    model = user.model if user.provider_type == provider_type and user.model else \
+        (env.model_name or {"openai": "gpt-4o-mini", "anthropic": "claude-sonnet-5"}[provider_type])
+    endpoint = user.endpoint if user.provider_type == provider_type and user.endpoint else \
+        {"openai": "https://api.openai.com/v1",
+         "anthropic": "https://api.anthropic.com"}[provider_type]
+    return cls(endpoint=endpoint, model=model,
+               api_key=credentials.get_api_key(provider_type),
+               send_process_names=user.send_process_names,
+               send_event_excerpts=user.send_event_excerpts,
+               timeout=env.llm_timeout_seconds)

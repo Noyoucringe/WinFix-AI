@@ -105,8 +105,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _helper_mode(argv: list[str]) -> int | None:
+    """Elevated one-shot helper: ``--run-remediation TOOL --arguments JSON --result PATH``."""
+    from app.core.elevation import HELPER_FLAG, helper_main
+
+    if HELPER_FLAG not in argv:
+        return None
+    try:
+        tool = argv[argv.index(HELPER_FLAG) + 1]
+        arguments = argv[argv.index("--arguments") + 1]
+        result = argv[argv.index("--result") + 1]
+    except (ValueError, IndexError):
+        return 2
+    return helper_main(tool, arguments, result)
+
+
 def main(argv: list[str] | None = None) -> int:
+    import sys
+
     setup_logging()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    helper = _helper_mode(argv)
+    if helper is not None:
+        return helper
     parser = build_parser()
     args = parser.parse_args(argv)
 

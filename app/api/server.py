@@ -29,11 +29,10 @@ from app.api.schemas import (
 from app.core.agent import Agent
 from app.core.config import get_settings
 from app.core.history import HistoryStore
-from app.core.models import Category, Session, SessionStatus
+from app.core.models import Session, SessionStatus
 from app.core.safety import ApprovalRequiredError, SafetyError
 from app.core.tool_registry import get_registry
 from app.core.verification_engine import VerificationEngine
-from app.knowledge.categories import get_category_spec
 
 app = FastAPI(title="WinFix AI", version="1.0.0")
 
@@ -41,7 +40,9 @@ _history = HistoryStore()
 
 
 def _agent() -> Agent:
-    return Agent(history=_history)
+    # A server process must never raise UAC prompts; admin-only fixes report
+    # "access denied" instead unless the server itself runs elevated.
+    return Agent(history=_history, elevate=False)
 
 
 def _load_session(session_id: str) -> Session:
@@ -141,16 +142,20 @@ def execute(req: ExecuteRequest) -> ExecuteResponse:
 
 @app.post("/api/verify", response_model=ExecuteResponse)
 def verify(req: VerifyRequest) -> ExecuteResponse:
+    """Re-run the verification for the most recent fix in a session."""
     session = _load_session(req.session_id)
-    category = session.diagnosis.category if session.diagnosis else Category.UNKNOWN
-    spec = get_category_spec(category)
-    tools = list(spec.verification_tools) if spec else []
-    verification = VerificationEngine().run(category, tools, session.diagnostics)
+    if not session.remediations:
+        raise HTTPException(status_code=400, detail="No fix has been applied in this session")
+    last = session.remediations[-1]
+    proposal = next((p for p in session.proposals if p.tool == last.tool), None)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Proposal not found for session")
+    verification = VerificationEngine().run(session, proposal, last)
     session.verification = verification
-    session.status = (
-        SessionStatus.RESOLVED if verification.improved else SessionStatus.UNRESOLVED
-    )
-    session.final_outcome = verification.summary
+    session.verifications.append(verification)
+    session.status = (SessionStatus.RESOLVED if verification.improved
+                      else SessionStatus.UNRESOLVED)
+    session.final_outcome = f"{verification.headline} {verification.summary}".strip()
     _history.save_session(session)
     return ExecuteResponse(
         session_id=session.id,
