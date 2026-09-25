@@ -62,7 +62,8 @@ def test_display_driver_errors_count_resets(as_windows, monkeypatch):
     assert data["driver_resets"] == 2
 
 
-def test_gpu_tools_are_unsupported_off_windows():
+def test_gpu_tools_are_unsupported_off_windows(monkeypatch):
+    monkeypatch.setattr(graphics, "IS_WINDOWS", False)
     for tool in (graphics.get_gpu_info, graphics.get_gpu_usage,
                  graphics.get_display_driver_errors):
         result = tool()
