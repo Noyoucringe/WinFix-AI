@@ -15,6 +15,8 @@ settings, databases, logs, tests and reports are never collected.
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 ROOT = Path(SPECPATH)
 ASSETS = ROOT / "app" / "gui" / "assets"
 ICON = ASSETS / "winfix.ico"
@@ -37,6 +39,10 @@ a = Analysis(
         "keyring.backends.fail",
         "win32ctypes.core",
         "win32ctypes.pywin32.win32cred",
+        # The Anthropic SDK imports parts of itself lazily.
+        *collect_submodules("anthropic", filter=lambda name: not name.startswith((
+            "anthropic.lib.bedrock", "anthropic.lib.vertex", "anthropic.lib.foundry",
+            "anthropic.lib.aws", "anthropic.lib.tools.mcp"))),
     ],
     hookspath=[],
     runtime_hooks=[],

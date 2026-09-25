@@ -12,8 +12,11 @@ Describe a problem in your own words, such as *"My laptop is very slow"*,
 5. measures again and shows the before and after, so you know whether the fix worked.
 
 It is a Windows 11-style desktop app (light and dark mode) built to a detailed
-design spec. The AI can pick which **read-only** checks to run next; it can never
-run commands, scripts, registry edits or code.
+design spec. With an AI model turned on, the investigation is AI-led: the model
+reads your description, decides what kind of problem it is and which
+**read-only** checks to run, then looks at the results and asks for more checks
+(up to three rounds) until it has enough evidence. It can never run commands,
+scripts, registry edits or code, and every fix still needs your approval.
 
 ---
 
@@ -76,22 +79,24 @@ flowchart TB
     end
 
     subgraph Tools["Tool registry"]
-        Diag["34 read-only diagnostics<br/>psutil · Win32 API · fixed PowerShell queries"]
+        Diag["37 read-only diagnostics<br/>psutil · Win32 API · fixed PowerShell queries"]
         Fix["17 predefined fixes<br/>risk · admin flag · verification checks"]
     end
 
     subgraph AI["AI (optional)"]
-        Local["Local analysis (default, offline)"]
-        Cloud["Cloud provider (opt-in)<br/>OpenAI- or Anthropic-compatible"]
+        Local["Built-in analysis (default, offline)"]
+        LocalAI["Local AI model (Ollama / LM Studio)<br/>runs on this PC"]
+        Cloud["Cloud AI (opt-in)<br/>Anthropic Claude or OpenAI-compatible"]
         Priv["Privacy sanitizer<br/>minimize + redact"]
     end
 
     Pages --> Ctrl --> Agent
     Agent --> Plan --> Safety --> Diag
     Diag --> Know --> Agent
-    Agent -- "evidence summary" --> Priv --> Cloud
-    Cloud -- "tool NAMES only (validated)" --> Safety
+    Agent -- "problem + evidence summary" --> Priv --> Cloud
+    Cloud -- "category + check NAMES only (validated)" --> Safety
     Agent --> Local
+    Agent --> LocalAI -- "check NAMES only (validated)" --> Safety
     Agent --> Rem --> Dlg
     Dlg -- "approved" --> Safety --> Fix
     Fix -- "UAC for admin fixes<br/>(--run-remediation helper)" --> Win[(Windows)]
@@ -116,10 +121,11 @@ flowchart LR
   that ships with the app and has fixed arguments, a risk level and an admin flag.
   There is no `eval`, `exec`, `shell=True` or free-form PowerShell anywhere. The
   safety tests check the source tree for this.
-* **The AI never proposes fixes.** A cloud model may only name up to three extra
-  **read-only** checks. Each name is validated against the registry, and anything
-  else is rejected and logged. Fix proposals come from the evidence rules and the
-  category's allow-list.
+* **The AI never proposes fixes.** A model may only choose the problem category
+  (from a fixed list) and name **read-only** checks: up to 6 at the start and 4
+  more across at most 3 follow-up rounds. Each name is validated against the
+  registry, and anything else is rejected and logged. Fix proposals come from the
+  evidence rules and the category's allow-list.
 * **Approval is enforced twice**: by the dialog in the UI, and again by the
   safety validator, which refuses to run a fix unless `approved=True`.
 * **Bounded:** `MAX_AGENT_STEPS = 10`, `MAX_REMEDIATION_ATTEMPTS = 3`, and a
@@ -131,8 +137,8 @@ flowchart LR
 ### Privacy
 
 * Analysis is **local by default** and nothing leaves the PC.
-* Cloud analysis is opt-in (Settings → AI provider). Only measurements and
-  findings are sent. Process names and event-log excerpts are separate toggles.
+* Cloud analysis is opt-in (Settings → AI provider). Your problem description
+  (redacted), the measurements and the findings are sent. Process names and event-log excerpts are separate toggles.
   Every string is scrubbed of user names, the PC name, profile paths, IP and MAC
   addresses, e-mail addresses and anything that looks like a key or password.
   Each session records exactly what was sent, and History shows it.
@@ -142,9 +148,26 @@ flowchart LR
 
 ---
 
+## AI options (Settings → AI provider)
+
+| Option | What it does | Needs |
+|--------|--------------|-------|
+| **Built-in analysis** (default) | Offline keyword and typo-tolerant problem matching plus evidence rules. Nothing leaves the PC. | Nothing |
+| **Local AI model** | An AI model running on your own PC understands the problem and leads the investigation. Nothing leaves the PC. | [Ollama](https://ollama.com) (`ollama pull llama3.1`, address `http://localhost:11434/v1`) or LM Studio (`http://localhost:1234/v1`) |
+| **Cloud AI** | Anthropic Claude (default model `claude-opus-5`) or any OpenAI-compatible service leads the investigation. | Your own API key |
+
+To use Claude: create a key at [console.anthropic.com](https://console.anthropic.com)
+→ *API Keys*, then in WinFix go to **Settings → AI provider → Cloud AI →
+Anthropic (Claude)**, paste the key and choose **Test connection**. The key is
+stored in Windows Credential Manager, never in files. WinFix does not ship with
+a key; API usage is billed to your own Anthropic account.
+
+---
+
 ## What it can diagnose and fix
 
-**34 read-only checks** cover system and uptime, CPU, memory (including
+**37 read-only checks** cover system and uptime, CPU, graphics (GPU load per
+app, graphics adapter and driver age, display driver crashes and resets), memory (including
 committed and compressed memory), disk activity and free space, reclaimable
 space, running and unresponsive apps, startup apps, the network adapter,
 gateway, DNS and internet, Wi-Fi, services (Search, Update, BITS, Audio,
@@ -166,7 +189,7 @@ drivers, Bluetooth, and System and Application event logs.
 
 ```text
 app/
-  __init__.py       version (1.0.0), engine version, publisher
+  __init__.py       version (1.0.2), engine version, publisher
   main.py           entry point: GUI, --demo, --self-test, --health-check, CLI tools
   core/             models, tool registry, safety validator, planner, agent,
                     remediation/verification engines, elevation helper, history
@@ -230,10 +253,14 @@ This creates `.venv-build`, installs the requirements plus PyInstaller, and runs
 1. checks that version numbers match and scans `app/` for anything that looks like a secret,
 2. runs the whole test suite,
 3. builds `dist/WinFixAI.exe` (one file, windowed, icon, version resource
-   *WinFix AI 1.0.0 / publisher WinFix AI*),
+   *WinFix AI 1.0.2 / publisher WinFix AI*),
 4. checks the exe's contents: no `.env`, databases, settings, logs, tests or
    reports, and no key-like strings,
-5. **starts the packaged exe** with `--self-test` and records the result,
+5. **starts the packaged exe** with `--self-test`, which opens every page in both
+   themes, runs the full approve-and-verify flow in demo mode and operates every
+   button, tab, toggle, dropdown and text box on every page (file dialogs,
+   credential storage, "Start with Windows" and AI requests are replaced with
+   harmless stand-ins during the test), and records the result,
 6. writes `dist/WinFixAI.zip` (exe, README, LICENSE, THIRD-PARTY-NOTICES),
    `dist/WinFixAI.sha256`, `dist/build_report.txt` and `dist/test_report.txt`.
 
@@ -242,7 +269,7 @@ CI runs the same script on `windows-latest` for every push (see
 Pushing a `v*` tag publishes a GitHub Release:
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
+git tag v1.0.2 && git push origin v1.0.2
 ```
 
 ## Tech stack

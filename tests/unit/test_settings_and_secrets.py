@@ -136,3 +136,28 @@ def test_crashing_credential_backend_falls_back_to_session_only(monkeypatch):
     assert credentials.get_api_key("openai") == "sk-test-abcdefghijklmnop1234"
     credentials.delete_api_key("openai")
     assert credentials.get_api_key("openai") is None
+
+
+def test_local_ai_option_uses_a_keyless_model_on_this_pc():
+    from app.core.user_settings import get_store
+    from app.llm.provider import OpenAICompatibleProvider, get_provider
+
+    get_store().update(analysis="local_ai")
+    provider = get_provider()
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.on_this_pc and provider.available
+    assert provider.endpoint == "http://localhost:11434/v1"
+    get_store().update(local_endpoint="http://localhost:1234/v1", local_model="qwen2.5")
+    provider = get_provider()
+    assert provider.endpoint == "http://localhost:1234/v1" and provider.model == "qwen2.5"
+
+
+def test_anthropic_defaults_to_claude_opus_5():
+    from app.core.user_settings import get_store
+    from app.llm.provider import AnthropicProvider, get_provider
+
+    get_store().update(analysis="cloud", provider_type="anthropic")
+    provider = get_provider()
+    assert isinstance(provider, AnthropicProvider)
+    assert provider.model == "claude-opus-5"
+    assert not provider.available  # no key saved yet

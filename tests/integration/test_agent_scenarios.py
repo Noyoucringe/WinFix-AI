@@ -56,7 +56,7 @@ def test_live_events_follow_the_progress_screen(scenario):
     events = []
     Agent().diagnose("My laptop is very slow", events=events.append)
     kinds = [e.kind for e in events]
-    assert kinds[0] == "plan"
+    assert kinds[:2] == ["understanding", "plan"]
     assert kinds.count("check_started") == kinds.count("check_finished") >= 7
     assert kinds[-2:] == ["analyzing", "diagnosed"]
     first = next(e for e in events if e.kind == "check_finished")

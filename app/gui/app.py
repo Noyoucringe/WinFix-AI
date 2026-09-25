@@ -265,14 +265,88 @@ class SelfTest:
                 self.check(f"Page {key} ({mode})", visit)
             self.check(f"History detail ({mode})", lambda mode=mode: self._history_detail(mode))
         theme.manager().apply("light")
+        from app.gui.exercise import ai_stack_check
+
+        self.check("AI providers work (local stub server)", ai_stack_check)
         self.check("Troubleshooting flow: diagnose", self._diagnose)
         self.check("Troubleshooting flow: approve and verify", self._approve)
         self.check("Compact navigation below 1000 px", self._compact)
+        self._exercise_everything()
         self.check("Every page fits a 1000 px window", lambda: self._fits(1000, 720))
         self.check("Every page fits the minimum window size", lambda: self._fits(760, 560))
         self.window._force_close = True
         self.window.close()
         return self.checks
+
+    # --- every control ------------------------------------------------------
+    def _quick_settle(self) -> None:
+        from app.gui.exercise import wait_until
+        from app.gui.workers import wait_for_idle
+
+        self.pump(60)
+        wait_for_idle(30000)
+        wait_until(lambda: not self.window.controller.busy, 120)
+        wait_for_idle(30000)
+        self.pump(60)
+
+    def _exercise_everything(self) -> None:
+        """Click every button, radio, toggle and tab, pick every dropdown option and
+        type into every text box, on every page and step, like a user would."""
+        from app.gui.exercise import Exerciser
+        from app.gui.pages.diagnostics import TABS
+
+        w = self.window
+        ex = Exerciser(w, self._quick_settle, _errors)
+
+        def page(key: str, **params):
+            def open_page():
+                if w.current_key() != key or params:
+                    w.navigate(key, **params)
+                return w.page(key)
+            return open_page
+
+        def view(name: str):
+            def open_page():
+                w.navigate("troubleshoot")
+                troubleshoot = w.page("troubleshoot")
+                if troubleshoot.view != name:
+                    troubleshoot.show_view(name)
+                return troubleshoot
+            return open_page
+
+        def diagnostics_tab(tab: str):
+            def open_page():
+                w.navigate("diagnostics")
+                diagnostics = w.page("diagnostics")
+                if diagnostics.current != tab:
+                    diagnostics.tabs.select(tab)
+                return diagnostics
+            return open_page
+
+        def history_detail():
+            rows = w.history.list_sessions(limit=1)
+            return page("history_detail", session_id=rows[0]["id"])()
+
+        targets = [("Troubleshoot: result", view("result")),
+                   ("Troubleshoot: recommended fix", view("fix")),
+                   ("Troubleshoot: diagnosis", view("diagnosis")),
+                   ("Home", page("home")), ("Troubleshoot: start", view("start")),
+                   ("History", page("history")), ("History detail", history_detail)]
+        targets += [(f"Diagnostics: {text}", diagnostics_tab(key)) for key, text, _ in TABS]
+        targets += [("Settings", page("settings")), ("AI provider", page("settings_ai")),
+                    ("Privacy", page("settings_privacy")), ("About", page("about")),
+                    ("Navigation and title bar", lambda: w)]
+        for label, open_page in targets:
+            def run(label=label, open_page=open_page) -> str:
+                count, problems = ex.run(label, open_page)
+                if problems:
+                    _fail("; ".join(problems[:6]))
+                if count == 0:
+                    _fail("no controls found")
+                return f"{count} controls operated"
+            self.check(f"Controls work: {label}", run)
+        w.navigate("home")
+        self.settle()
 
     def _history_detail(self, mode: str) -> str:
         rows = self.window.history.list_sessions(limit=1)
@@ -400,9 +474,12 @@ def run_self_test(report: Path | None = None, screenshots: Path | None = None,
     app = create_application()
     _apply_theme()
     _install_excepthook(None)
+    from app.gui.exercise import sandbox
+
     test = SelfTest(screenshots)
     try:
-        checks = test.run()
+        with sandbox(folder / "sandbox"):
+            checks = test.run()
     except Exception as exc:  # noqa: BLE001 - a crash is a failed self-test
         _errors.append(traceback.format_exc())
         checks = test.checks + [Check("Self-test run", False, f"{type(exc).__name__}: {exc}")]

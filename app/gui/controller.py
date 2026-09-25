@@ -64,7 +64,8 @@ class TroubleshootController(QObject):
             return False
         settings = get_store().load()
         self._agent = Agent(provider=get_provider(settings), history=self.history,
-                            depth=settings.diagnostic_depth)
+                            depth=settings.diagnostic_depth,
+                            elevate=self.demo is None)  # demo never asks for admin
         if self.demo is not None:
             self.demo.prepare(problem)
         self._cancel = threading.Event()

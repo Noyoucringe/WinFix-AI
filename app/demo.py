@@ -22,6 +22,7 @@ from app.demo_evidence import (
     BLUETOOTH_MISSING,
     DNS_BROKEN,
     DNS_FIXED,
+    GPU_STUTTER,
     SLOW_PC,
     SLOW_PC_AFTER_FIX_RESOLVED,
     STORAGE_FULL,
@@ -79,6 +80,7 @@ SCENARIOS = {
     Category.WINDOWS_UPDATE: (UPDATE_SERVICE_STOPPED, UPDATE_FIXED),
     Category.BLUETOOTH: (BLUETOOTH_DRIVER, None),
     Category.STARTUP_PROBLEMS: (SLOW_STARTUP, None),
+    Category.GRAPHICS: (GPU_STUTTER, None),
 }
 
 
@@ -92,10 +94,20 @@ def isolate() -> Path:
     return folder
 
 
+_active = False
+
+
+def is_active() -> bool:
+    """True while demo mode is on; the agent then never elevates or runs real fixes."""
+    return _active
+
+
 class DemoMode:
     """Serves recorded evidence and simulates fixes on the live registry."""
 
     def __init__(self, registry) -> None:
+        global _active
+        _active = True
         self.registry = registry
         self._original = registry.execute_tool
         self._evidence: dict = {}
@@ -133,6 +145,8 @@ class DemoMode:
         return self._original(name, arguments)
 
     def restore(self) -> None:
+        global _active
+        _active = False
         self.registry.execute_tool = self._original
 
 

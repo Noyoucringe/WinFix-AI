@@ -171,3 +171,11 @@ def test_memory_details_survives_process_listing_failure(monkeypatch):
 
     monkeypatch.setattr(performance.psutil, "process_iter", boom)
     assert performance._compressed_memory_mb() is None
+
+
+def test_display_text_is_cleaned_of_garbage_characters():
+    from app.core.winapi import clean_display_text
+
+    assert clean_display_text("NVIDIA App\x008\x01\x02FileVe".split("\x00", 1)[0]) == "NVIDIA App"
+    assert clean_display_text("Chrome\x07​") == "Chrome"
+    assert clean_display_text("\x00\x01") is None
