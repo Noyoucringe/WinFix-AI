@@ -334,6 +334,12 @@ class SelfTest:
 
     def _fits(self, width: int, height: int) -> str:
         """No page may be wider than its visible area (content would be clipped)."""
+        from PySide6.QtGui import QFontDatabase
+
+        if not QFontDatabase.families():
+            # e.g. Qt's offscreen platform on Windows: no fonts are loaded and
+            # text is measured with placeholder metrics, so widths mean nothing.
+            return "skipped: this Qt platform has no fonts to measure text with"
         w = self.window
         w.resize(width, height)
         self.settle()

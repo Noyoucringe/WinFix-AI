@@ -58,7 +58,14 @@ class Text(QLabel):
                  selectable: bool = False) -> None:
         super().__init__(text, parent)
         self.setFont(font(style))
+        # Sentences always wrap; only short labels stay on one line.
+        wrap = wrap or len(text) > 48
         self.setWordWrap(wrap)
+        if wrap:
+            # Qt guesses a wrapped label's minimum width from font metrics, and
+            # the guess varies by platform; make wrapping always win over
+            # widening the page.
+            self.setMinimumWidth(48)
         self.setTextFormat(Qt.TextFormat.PlainText)
         if role:
             self.setProperty("role", role)
@@ -251,6 +258,14 @@ class RowButton(QPushButton):
             return super().sizeHint()
         hint = layout.sizeHint()
         return QSize(hint.width(), max(self._min_height, hint.height()))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        # QPushButton's minimum is its preferred size; a row may shrink to its
+        # layout's minimum so its texts wrap instead of widening the page.
+        layout = self.layout()
+        if layout is None:
+            return super().minimumSizeHint()
+        return QSize(layout.minimumSize().width(), self._min_height)
 
     def event(self, event) -> bool:
         result = super().event(event)
