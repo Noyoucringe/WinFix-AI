@@ -500,7 +500,14 @@ class EmptyState(QWidget):
         body = Text(message, "body", "secondary", wrap=True)
         body.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         body.setMaximumWidth(420)
-        layout.addWidget(body, 0, Qt.AlignmentFlag.AlignHCenter)
+        # Stretches (not an alignment flag) center it, so the label gets real
+        # width to wrap into instead of its minimum.
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(body, 4)
+        row.addStretch(1)
+        layout.addLayout(row)
+        self.message = body
         if action is not None:
             layout.addSpacing(8)
             layout.addWidget(action, 0, Qt.AlignmentFlag.AlignHCenter)
