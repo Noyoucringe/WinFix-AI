@@ -18,6 +18,7 @@ from typing import Any
 from app.core.models import Category, Diagnosis
 from app.knowledge import evidence as ev
 
+ITEM_PROBLEM = "Your problem description"
 ITEM_MEASUREMENTS = "Measurements and findings"
 ITEM_PROCESS_NAMES = "Process and service names"
 ITEM_EVENTS = "Event log excerpts"

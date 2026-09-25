@@ -46,7 +46,8 @@ TAB_TOOLS = {
     "storage": ["get_disk_partitions", "get_reclaimable_space"],
     "network": ["get_network_adapters", "get_ip_configuration"],
     "services": ["get_important_services"],
-    "devices": ["get_problem_devices", "get_bluetooth_devices", "get_driver_information"],
+    "devices": ["get_gpu_info", "get_problem_devices", "get_bluetooth_devices",
+                "get_driver_information"],
     "events": ["get_recent_system_errors", "get_recent_application_errors"],
 }
 
@@ -576,6 +577,24 @@ class DiagnosticsPage(Page):
 
     def _render_devices(self, r: dict) -> list[QWidget]:
         out = []
+        gpu = r.get("get_gpu_info") or {}
+        if gpu.get("success"):
+            for a in (gpu.get("data") or {}).get("adapters") or []:
+                age = a.get("driver_age_days")
+                out.append(self._kv_card(a.get("name") or "Graphics adapter", [
+                    ("Driver version", a.get("driver_version") or "—"),
+                    ("Driver date", (a.get("driver_date") or "—")
+                     + (f" ({age // 30} months old)" if age else "")),
+                    ("Status", "Working" if a.get("healthy", True) else
+                     f"Problem ({a.get('status')})"),
+                    ("Display", " @ ".join(x for x in (a.get("resolution"),
+                                                       f"{a['refresh_rate']} Hz"
+                                                       if a.get("refresh_rate") else None)
+                                           if x) or "—")]))
+        elif gpu:
+            unavailable = self._unavailable(gpu, "Graphics adapter")
+            if unavailable:
+                out.append(unavailable)
         for tool, title in (("get_problem_devices", "Devices with problems"),
                             ("get_bluetooth_devices", "Bluetooth")):
             result = r[tool]

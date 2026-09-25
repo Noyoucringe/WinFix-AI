@@ -80,6 +80,7 @@ class Category(str, Enum):
     STARTUP_PROBLEMS = "startup_problems"
     DEVICE_DRIVER = "device_driver"
     WINDOWS_SEARCH = "windows_search"
+    GRAPHICS = "graphics"
     UNKNOWN = "unknown"
 
 
@@ -88,6 +89,8 @@ class Plan(BaseModel):
     summary: str = ""
     diagnostic_tools: list[str] = Field(default_factory=list)
     rationale: str = ""
+    planned_by: str = "rules"   # "rules" (offline) or "ai"
+    understood: str = ""        # the AI's one-sentence reading of the problem
 
 
 class EvidenceCard(BaseModel):

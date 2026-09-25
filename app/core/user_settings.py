@@ -28,12 +28,16 @@ DEFAULT_ENDPOINTS = {
 }
 DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
-    "anthropic": "claude-sonnet-5",
+    "anthropic": "claude-opus-5",
 }
 PROVIDER_LABELS = {
+    "anthropic": "Anthropic (Claude)",
     "openai": "OpenAI-compatible",
-    "anthropic": "Anthropic-compatible",
 }
+# Local AI server on this PC (Ollama's OpenAI-compatible endpoint by default;
+# LM Studio uses http://localhost:1234/v1).
+DEFAULT_LOCAL_ENDPOINT = "http://localhost:11434/v1"
+DEFAULT_LOCAL_MODEL = "llama3.1"
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -59,10 +63,12 @@ def validate_endpoint(url: str) -> str:
 
 class UserSettings(BaseModel):
     theme: Literal["system", "light", "dark"] = "system"
-    analysis: Literal["local", "cloud"] = "local"
+    analysis: Literal["local", "local_ai", "cloud"] = "local"
     provider_type: ProviderType = "openai"
     endpoint: str = ""
     model: str = ""
+    local_endpoint: str = ""
+    local_model: str = ""
     send_process_names: bool = True
     send_event_excerpts: bool = False
     diagnostic_depth: Literal["quick", "standard", "thorough"] = "standard"
@@ -70,7 +76,7 @@ class UserSettings(BaseModel):
     start_with_windows: bool = False
     window: dict = Field(default_factory=dict)
 
-    @field_validator("endpoint")
+    @field_validator("endpoint", "local_endpoint")
     @classmethod
     def _endpoint(cls, value: str) -> str:
         return validate_endpoint(value)

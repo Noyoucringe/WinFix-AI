@@ -87,6 +87,13 @@ CHECKS: dict[str, CheckInfo] = {
                                        "bluetooth", "Plug and Play manager"),
     "get_driver_information": CheckInfo("Drivers", "Reading installed drivers", "device",
                                         "WMI"),
+    "get_gpu_info": CheckInfo("Graphics adapter", "Reading the graphics card and its driver",
+                              "pc", "WMI"),
+    "get_gpu_usage": CheckInfo("GPU usage", "Measuring how busy the GPU is, and which apps "
+                               "use it", "diagnostics", "GPU performance counters"),
+    "get_display_driver_errors": CheckInfo("Display driver errors",
+                                           "Looking for graphics driver crashes",
+                                           "event", "Windows Event Log"),
     "get_recent_system_errors": CheckInfo("System errors", "Recent event log entries",
                                           "event", "Windows Event Log"),
     "get_recent_application_errors": CheckInfo("Application errors",
@@ -152,6 +159,13 @@ _SUMMARIES: dict[str, Callable[[dict], str]] = {
     "get_recent_application_crashes": lambda d: (_count(d["count"], "crash")
                                                  + " in the last 7 days"),
     "get_boot_time": lambda d: f"Running for {d['uptime_days']:.1f} days",
+    "get_gpu_info": lambda d: (", ".join(a["name"] for a in d["adapters"][:2])
+                               or "No graphics adapter found"),
+    "get_gpu_usage": lambda d: (f"GPU {d['utilization_percent']:.0f}% busy"
+                                + (f" · top app: {d['top_apps'][0]['name']}"
+                                   if d.get("top_apps") else "")),
+    "get_display_driver_errors": lambda d: (_count(d["driver_resets"], "driver reset")
+                                            + " in the last 7 days"),
 }
 
 

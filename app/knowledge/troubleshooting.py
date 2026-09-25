@@ -21,6 +21,10 @@ from app.knowledge.categories import get_category_spec
 Results = ev.Results
 
 MEMORY_HIGH = 70.0
+GPU_MEMORY_RELEVANT = 85.0   # RAM % above which memory also matters for graphics lag
+GPU_BUSY = 85.0              # GPU engine % considered fully busy
+GPU_APP_NOTABLE = 25.0       # an app using this much GPU is worth naming
+GPU_DRIVER_OLD_DAYS = 365
 MEMORY_SEVERE = 85.0
 CPU_ELEVATED = 60.0
 CPU_HIGH = 85.0
@@ -54,6 +58,12 @@ _SERVICE_RULES: dict[str, tuple[set[Category], str | None]] = {
 }
 
 _HEADLINES = {
+    "gpu_busy": "Your graphics card is working at its limit.",
+    "display_driver_resets": "Your graphics driver keeps crashing and recovering.",
+    "gpu_device_problem": "Windows reports a problem with your graphics card.",
+    "gpu_basic_driver": "Your graphics card is running without its proper driver.",
+    "gpu_old_driver": "Your graphics driver is out of date.",
+    "gpu_background_app": "A background app is using your graphics card.",
     "memory_pressure": "Your PC is experiencing memory pressure.",
     "high_cpu": "Your processor is working unusually hard.",
     "search_indexer": "Windows Search isn't working properly.",
@@ -78,6 +88,12 @@ _HEADLINES = {
 
 # Short names for History's "Diagnosis" column.
 SHORT_LABELS = {
+    "gpu_busy": "GPU fully busy",
+    "display_driver_resets": "Graphics driver crashes",
+    "gpu_device_problem": "Graphics card problem",
+    "gpu_basic_driver": "No graphics driver",
+    "gpu_old_driver": "Old graphics driver",
+    "gpu_background_app": "Background app using GPU",
     "memory_pressure": "Memory pressure",
     "high_cpu": "High CPU usage",
     "search_indexer": "Windows Search indexer issue",
@@ -121,6 +137,14 @@ def _memory(results: Results, category: Category) -> list[Cause]:
     if not m or m["percent"] < MEMORY_HIGH:
         return []
     severe = m["percent"] >= MEMORY_SEVERE
+    if category == Category.GRAPHICS and m["percent"] < GPU_MEMORY_RELEVANT:
+        # Moderate RAM use rarely explains graphics lag; don't let it headline.
+        return [Cause(id="memory_pressure", cause="Memory in use is moderately high",
+                      confidence=0.3, level=Level.INFO,
+                      detail=f"{m['percent']:.1f}% of memory is in use. This is unlikely "
+                             "to be the main cause of graphics lag.",
+                      evidence=[f"Memory in use: {m['percent']:.1f}%"],
+                      sources=["get_memory_usage"])]
     evidence = [f"Memory in use: {m['percent']:.1f}%"]
     if m.get("used_gb") and m.get("total_gb"):
         evidence.append(f"{m['used_gb']:.1f} GB of {m['total_gb']:.1f} GB used")
@@ -412,8 +436,90 @@ def _background(results: Results, category: Category) -> list[Cause]:
     return causes
 
 
+# Apps that use the GPU in the background and compete with games and video.
+_GPU_BACKGROUND = ("msedge", "chrome", "firefox", "opera", "brave", "vivaldi", "discord",
+                   "teams", "zoom", "slack", "spotify", "wallpaper", "obs", "streamlabs",
+                   "gamebar", "nvidia share", "nvcontainer", "medal", "outplayed",
+                   "xmrig", "nicehash", "miner")
+
+
+def _graphics(results: Results, category: Category) -> list[Cause]:
+    causes: list[Cause] = []
+    adapters = ev.gpu_adapters(results) or []
+    for a in adapters:
+        if a.get("basic_driver"):
+            causes.append(Cause(
+                id="gpu_basic_driver", cause="No graphics driver installed",
+                detail=(f"Windows is using '{a['name']}', a basic fallback driver. Games and "
+                        "video can be slow and some displays won't work properly."),
+                confidence=0.9, level=Level.CRITICAL,
+                evidence=[f"Adapter: {a['name']}"], sources=["get_gpu_info"]))
+        elif not a.get("healthy", True):
+            causes.append(Cause(
+                id="gpu_device_problem", cause=f"{a['name']} reports a problem",
+                detail=(f"Device Manager reports status '{a.get('status')}' (code "
+                        f"{a.get('problem_code')}) for {a['name']}."),
+                confidence=0.85, level=Level.CRITICAL,
+                evidence=[f"{a['name']}: {a.get('status')}"], sources=["get_gpu_info"]))
+    errors = ev.display_driver_errors(results)
+    if errors and errors.get("driver_resets"):
+        n = errors["driver_resets"]
+        causes.append(Cause(
+            id="display_driver_resets",
+            cause=f"Graphics driver crashed {n} time{'s' if n != 1 else ''} this week",
+            detail=("Windows logged that the display driver stopped responding and "
+                    "recovered. This usually shows up as freezes, black screens or "
+                    "stutter, and is typically caused by a driver bug, overheating or an "
+                    "unstable overclock."),
+            confidence=min(0.9, 0.6 + 0.1 * n), level=Level.CRITICAL if n >= 3 else Level.CAUTION,
+            evidence=[f"Display driver resets (7 days): {n}"],
+            sources=["get_display_driver_errors"]))
+    usage = ev.gpu_usage(results)
+    if usage:
+        top = (usage.get("top_apps") or [None])[0]
+        busy = usage.get("utilization_percent", 0) >= GPU_BUSY
+        if busy:
+            detail = f"The GPU was {usage['utilization_percent']:.0f}% busy when measured."
+            if top:
+                detail += f" {top['name']} was using {top['gpu_percent']:.0f}% of it."
+            causes.append(Cause(
+                id="gpu_busy", cause="GPU is fully busy", detail=detail,
+                confidence=0.75, level=Level.CAUTION,
+                evidence=[f"GPU utilization: {usage['utilization_percent']:.0f}%"],
+                sources=["get_gpu_usage"]))
+        background = next((a for a in usage.get("top_apps") or []
+                           if a.get("gpu_percent", 0) >= GPU_APP_NOTABLE
+                           and any(h in a["name"].lower() for h in _GPU_BACKGROUND)), None)
+        if background:
+            causes.append(Cause(
+                id="gpu_background_app", cause=f"{background['name']} is using the GPU",
+                detail=(f"{background['name']} was using {background['gpu_percent']:.0f}% of "
+                        "the GPU. Browsers with video, chat, recording and wallpaper apps "
+                        "compete with games and video for the GPU."),
+                confidence=0.6, level=Level.CAUTION,
+                evidence=[f"{background['name']}: {background['gpu_percent']:.0f}% GPU"],
+                sources=["get_gpu_usage"]))
+    for a in adapters:
+        age = a.get("driver_age_days")
+        if a.get("healthy", True) and not a.get("basic_driver") and age and \
+                age > GPU_DRIVER_OLD_DAYS:
+            causes.append(Cause(
+                id="gpu_old_driver", cause="Graphics driver is more than a year old",
+                detail=(f"The driver for {a['name']} is from {a.get('driver_date')} "
+                        f"({age // 30} months old). Newer drivers often fix stutter and "
+                        "crashes in recent games."),
+                confidence=0.5 if category == Category.GRAPHICS else 0.3,
+                level=Level.CAUTION if category == Category.GRAPHICS else Level.INFO,
+                evidence=[f"Driver date: {a.get('driver_date')}",
+                          f"Driver version: {a.get('driver_version')}"],
+                sources=["get_gpu_info"]))
+            break
+    return causes
+
+
 RULES: tuple[Rule, ...] = (_memory, _search_indexer, _large_apps, _cpu, _disk, _network,
-                           _services, _updates, _bluetooth, _devices, _apps, _background)
+                           _services, _updates, _bluetooth, _devices, _apps, _background,
+                           _graphics)
 
 
 # --- evidence cards --------------------------------------------------------
@@ -560,6 +666,51 @@ def _storage_cards(results: Results) -> list[EvidenceCard]:
     return cards
 
 
+def _gpu_card(results: Results) -> EvidenceCard | None:
+    usage = ev.gpu_usage(results)
+    if usage is None:
+        return None
+    pct = usage.get("utilization_percent", 0.0)
+    top = (usage.get("top_apps") or [None])[0]
+    return EvidenceCard(
+        key="gpu", label="GPU", icon="diagnostics", value=f"{pct:.0f}%",
+        detail=f"Top app: {top['name']}" if top else "No app using it",
+        level=_level_for(pct, GPU_BUSY, 98), progress=pct / 100,
+        status_text="Fully busy" if pct >= GPU_BUSY else "Has headroom",
+        source="GPU performance counters")
+
+
+def _gpu_driver_card(results: Results) -> EvidenceCard | None:
+    adapters = ev.gpu_adapters(results)
+    if not adapters:
+        return None
+    a = next((x for x in adapters if not x.get("basic_driver")), adapters[0])
+    age = a.get("driver_age_days")
+    if a.get("basic_driver"):
+        level, status = Level.CRITICAL, "No driver installed"
+    elif not a.get("healthy", True):
+        level, status = Level.CRITICAL, "Device problem"
+    elif age and age > GPU_DRIVER_OLD_DAYS:
+        level, status = Level.CAUTION, f"{age // 30} months old"
+    else:
+        level, status = Level.OK, "Up to date" if age is not None else "Installed"
+    return EvidenceCard(key="gpu_driver", label="Graphics driver", icon="pc",
+                        value=a.get("driver_version") or "Unknown", detail=a["name"],
+                        level=level, status_text=status, source="WMI")
+
+
+def _gpu_errors_card(results: Results) -> EvidenceCard | None:
+    errors = ev.display_driver_errors(results)
+    if errors is None:
+        return None
+    n = errors.get("driver_resets", 0)
+    return EvidenceCard(key="gpu_resets", label="Driver crashes", icon="event",
+                        value=str(n), detail="Last 7 days",
+                        level=Level.OK if not n else Level.CRITICAL if n >= 3 else Level.CAUTION,
+                        status_text="None" if not n else "Driver recovered after a crash",
+                        source="Windows Event Log")
+
+
 def _cards(category: Category, results: Results) -> list[EvidenceCard]:
     builders: list[EvidenceCard | None]
     if category in _NET_CATEGORIES:
@@ -612,6 +763,10 @@ def _cards(category: Category, results: Results) -> list[EvidenceCard]:
                              level=Level.CAUTION if devices else Level.OK,
                              status_text="Needs attention" if devices else "All working",
                              source="Plug and Play manager")]
+    if category == Category.GRAPHICS:
+        return [c for c in (_gpu_card(results), _gpu_driver_card(results),
+                            _gpu_errors_card(results), _cpu_card(results),
+                            _memory_card(results)) if c]
     builders = [_memory_card(results), _cpu_card(results), _disk_card(results),
                 _top_app_card(results), _indexer_card(results)]
     if category == Category.STARTUP_PROBLEMS:
@@ -645,6 +800,20 @@ def _notes(causes: list[Cause], results: Results) -> list[str]:
     if "internet_unreachable" in ids:
         notes.append("Try restarting your router. If that doesn't help, contact your "
                      "internet provider.")
+    if ids & {"gpu_old_driver", "gpu_basic_driver", "display_driver_resets",
+              "gpu_device_problem"}:
+        notes.append("Get the latest graphics driver from your PC maker or from NVIDIA, AMD "
+                     "or Intel (GeForce Experience / NVIDIA App, AMD Adrenalin, Intel Driver "
+                     "& Support Assistant), or from Windows Update > Optional updates. "
+                     "WinFix never downloads or installs drivers itself.")
+    if "display_driver_resets" in ids:
+        notes.append("If the crashes continue: undo any GPU overclock, make sure the PC "
+                     "isn't overheating (clean dust from fans and vents), and check that the "
+                     "graphics card's power cables are firmly connected.")
+    if "gpu_busy" in ids or "gpu_background_app" in ids:
+        notes.append("Lowering in-game graphics settings or resolution, or closing other "
+                     "apps that use the GPU (browsers with video, screen recorders), frees "
+                     "GPU capacity.")
     if "device_problem" in ids or "bt_problem" in ids:
         notes.append("Check Windows Update > Advanced options > Optional updates for a "
                      "newer driver.")

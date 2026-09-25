@@ -265,6 +265,9 @@ class SelfTest:
                 self.check(f"Page {key} ({mode})", visit)
             self.check(f"History detail ({mode})", lambda mode=mode: self._history_detail(mode))
         theme.manager().apply("light")
+        from app.gui.exercise import ai_stack_check
+
+        self.check("AI providers work (local stub server)", ai_stack_check)
         self.check("Troubleshooting flow: diagnose", self._diagnose)
         self.check("Troubleshooting flow: approve and verify", self._approve)
         self.check("Compact navigation below 1000 px", self._compact)

@@ -149,3 +149,28 @@ SCENARIOS = {
     "update_service_stopped": UPDATE_SERVICE_STOPPED,
     "bluetooth_missing": BLUETOOTH_MISSING,
 }
+
+# Graphics stutter: the display driver crashed and recovered three times this
+# week, and the driver is over a year old.
+GPU_STUTTER: dict[str, dict[str, Any]] = {
+    "get_gpu_usage": {"utilization_percent": 62.0, "engines": {"3D": 62.0, "VideoDecode": 4.0},
+                      "top_apps": [{"name": "Cyberpunk2077.exe", "gpu_percent": 58.0,
+                                    "gpu_memory_mb": 6150.0, "count": 1},
+                                   {"name": "msedge.exe", "gpu_percent": 4.0,
+                                    "gpu_memory_mb": 410.0, "count": 6}],
+                      "dedicated_memory_used_mb": 6700.0},
+    "get_gpu_info": {"count": 1, "problems": [], "adapters": [
+        {"name": "NVIDIA GeForce RTX 3060 Laptop GPU", "driver_version": "31.0.15.3623",
+         "driver_date": "2024-06-20", "driver_age_days": 460, "status": "OK",
+         "problem_code": 0, "healthy": True, "basic_driver": False,
+         "resolution": "1920 x 1080", "refresh_rate": 144}]},
+    "get_display_driver_errors": {"days": 7, "count": 3, "driver_resets": 3, "last": None,
+                                  "events": []},
+    "get_cpu_usage": {"usage_percent": 38.0, "per_cpu_percent": [38.0], "speed_mhz": 2900,
+                      "logical_cpus": 16, "physical_cpus": 8, "sample_seconds": 1},
+    "get_memory_usage": {"usage_percent": 71.1, "total_gb": 15.7, "available_gb": 4.5,
+                         "used_gb": 11.2, "swap_percent": 10.0, "swap_total_gb": 4.0},
+    "get_running_processes": {"process_count": 250, "app_count": 80,
+                              "not_responding_count": 0, "groups": [], "processes": []},
+    "get_problem_devices": {"count": 0, "devices": []},
+}

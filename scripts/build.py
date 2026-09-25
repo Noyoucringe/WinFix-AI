@@ -50,6 +50,7 @@ RUNTIME_DISTS = [
     "annotated-types", "httpx", "httpcore", "h11", "anyio", "idna", "certifi", "sniffio",
     "keyring", "pywin32-ctypes", "jaraco.classes", "jaraco.functools", "jaraco.context",
     "more-itertools", "importlib_metadata", "zipp",
+    "anthropic", "httpx2", "jiter", "docstring_parser",
 ]
 # Anything matching these must never be inside the executable.
 FORBIDDEN_BUNDLED = [r"(^|[\\/])\.env$", r"\.db$", r"\.db-wal$", r"settings\.json$",

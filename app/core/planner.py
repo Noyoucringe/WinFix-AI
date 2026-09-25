@@ -28,11 +28,19 @@ class Planner:
         self.provider = provider or get_provider()
         self.safety = safety or SafetyValidator(self.registry)
 
-    def plan(self, problem: str, depth: str = "standard") -> Plan:
-        category = self.provider.classify(problem)
-        spec = get_category_spec(category)
+    def plan(self, problem: str, depth: str = "standard", max_initial: int = 7) -> Plan:
         candidates = self.registry.diagnostic_names()
-        selected = self.provider.suggest_tools(problem, category, candidates)
+        understanding = self.provider.understand(problem, candidates)
+        if understanding is not None:
+            category = understanding.category
+            spec = get_category_spec(category)
+            # The AI's picks first, then the category's standard checks.
+            selected = list(understanding.checks) + [
+                t for t in (spec.diagnostic_tools if spec else ()) if t in candidates]
+        else:
+            category = self.provider.classify(problem)
+            spec = get_category_spec(category)
+            selected = self.provider.suggest_tools(problem, category, candidates)
         if spec and depth == "thorough":
             selected = list(selected) + [t for t in spec.thorough_tools if t not in selected]
 
@@ -52,8 +60,18 @@ class Planner:
             valid = [t for t in GENERAL_TOOLS if t in candidates]
         if depth == "quick":
             valid = valid[:QUICK_LIMIT]
+        elif understanding is not None:
+            # Leave room in the step budget for the AI's own follow-up rounds.
+            valid = valid[:max_initial]
 
         title = spec.title if spec else "General check-up"
+        if understanding is not None:
+            understood = understanding.restated or f"A problem in the '{title}' area."
+            rationale = (f"AI understood: {understood} {understanding.reasoning}".strip()
+                         + f" Running {len(valid)} read-only checks.")
+            return Plan(category=category, summary=f"Investigating: {title}",
+                        diagnostic_tools=valid, rationale=rationale, planned_by="ai",
+                        understood=understood)
         return Plan(
             category=category,
             summary=f"Investigating: {title}",

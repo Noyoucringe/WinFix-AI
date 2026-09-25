@@ -39,8 +39,8 @@ def test_short_keywords_match_whole_words_only():
     assert classify("my infant took a photo") == Category.UNKNOWN
 
 
-def test_all_15_categories_defined():
-    assert len(CATEGORIES) == 15
+def test_all_16_categories_defined():
+    assert len(CATEGORIES) == 16
     for spec in CATEGORIES.values():
         assert spec.diagnostic_tools
 

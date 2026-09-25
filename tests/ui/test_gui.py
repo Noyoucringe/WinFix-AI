@@ -191,6 +191,11 @@ WINDOWS_RESULTS = {
             "unhealthy": ["Spooler"], "healthy": False}),
     },
     "devices": {
+        "get_gpu_info": _ok({"count": 1, "adapters": [
+            {"name": "NVIDIA GeForce RTX 4060", "driver_version": "32.0.15.6094",
+             "driver_date": "2024-08-14", "driver_age_days": 400, "status": "OK",
+             "problem_code": 0, "healthy": True, "basic_driver": False,
+             "resolution": "2560 x 1440", "refresh_rate": 144}], "problems": []}),
         "get_problem_devices": _ok({"count": 1, "devices": [
             {"name": "Unknown USB Device", "class": "USB", "status": "Error",
              "problem": "CM_PROB_FAILED_START", "present": True}]}),

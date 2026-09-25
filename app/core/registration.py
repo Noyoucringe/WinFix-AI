@@ -14,6 +14,7 @@ from app.diagnostics import applications as d_app
 from app.diagnostics import devices as d_dev
 from app.diagnostics import drivers as d_drv
 from app.diagnostics import events as d_evt
+from app.diagnostics import graphics as d_gfx
 from app.diagnostics import network as d_net
 from app.diagnostics import performance as d_perf
 from app.diagnostics import services as d_svc
@@ -97,6 +98,13 @@ def register_diagnostics(reg: ToolRegistry) -> None:
               "Bluetooth radios and devices and their status", timeout=35),
         _diag("get_driver_information", d_drv.get_driver_information, "drivers",
               "Installed drivers, unsigned and oldest drivers", timeout=50),
+        # graphics
+        _diag("get_gpu_info", d_gfx.get_gpu_info, "graphics",
+              "Graphics adapters, driver version and age, and device status", timeout=30),
+        _diag("get_gpu_usage", d_gfx.get_gpu_usage, "graphics",
+              "How busy the GPU is and which apps are using it", timeout=40),
+        _diag("get_display_driver_errors", d_gfx.get_display_driver_errors, "graphics",
+              "Display driver crashes and recoveries in the last 7 days", timeout=35),
         # events
         _diag("get_recent_system_errors", d_evt.get_recent_system_errors, "events",
               "Critical and error events in the System log (24 hours)", timeout=35),

@@ -44,7 +44,7 @@ from app.gui.widgets.status import InfoBar, ProgressBar, StatusIcon
 from app.knowledge import checks as check_catalog
 from app.knowledge.remediations import fix_info
 from app.knowledge.troubleshooting import short_label
-from app.llm.provider import AI_UNAVAILABLE
+from app.llm.provider import AI_UNAVAILABLE, LocalProvider
 
 _LEVEL_STATE = {Level.OK: "success", Level.INFO: "info", Level.CAUTION: "caution",
                 Level.CRITICAL: "critical"}
@@ -212,7 +212,12 @@ class TroubleshootPage(Page):
         self.bar = ProgressBar()
         self.bar.set_value(None)
         self.add(self.bar)
-        self.add(16)
+        self.add(12)
+        # The AI's reading of the problem and its reasoning between rounds.
+        self.ai_note = InfoBar("info", "AI", "…")
+        self.ai_note.hide()
+        self.add(self.ai_note)
+        self.add(4)
         self.list = ListCard()
         self.add(self.list)
         self.add(12)
@@ -272,8 +277,22 @@ class TroubleshootPage(Page):
     def _on_event(self, event: AgentEvent) -> None:
         session = event.session
         if self.view == "investigating":
-            if event.kind == "plan":
+            if event.kind == "understanding":
+                agent = self.ctx.controller._agent
+                provider = agent.provider if agent else None
+                if provider is not None and provider.available and \
+                        not isinstance(provider, LocalProvider):
+                    self.current.setText("AI is reading your description...")
+            elif event.kind == "plan":
                 self._build_rows(session)
+                if session.plan and session.plan.planned_by == "ai" and event.message \
+                        and event.message != "Additional checks":
+                    text = event.message
+                    if text.startswith("AI understood: "):
+                        text = text[len("AI understood: "):]
+                    self.ai_note.message.setText(text)
+                    self.ai_note.message.show()
+                    self.ai_note.show()
             elif event.kind in ("check_started", "check_finished"):
                 record = next((c for c in session.checks if c.tool == event.tool), None)
                 row = self.rows.get(event.tool)
@@ -321,9 +340,16 @@ class TroubleshootPage(Page):
         if d.ai_status == "unavailable":
             self.add(InfoBar("info", AI_UNAVAILABLE), 16)
         elif d.ai_status == "cloud":
-            items = ", ".join(session.cloud.items) or "measurements and findings"
-            self.add(InfoBar("info", "Analyzed with cloud AI.",
-                             f"Sent to {session.cloud.endpoint_host}: {items.lower()}."), 16)
+            understood = session.plan.understood if session.plan else ""
+            if session.cloud.sent:
+                items = ", ".join(session.cloud.items) or "measurements and findings"
+                where = f"Sent to {session.cloud.endpoint_host}: {items.lower()}."
+                title = "Investigated with cloud AI."
+            else:
+                where = "The AI model runs on this PC; nothing left your device."
+                title = "Investigated with local AI."
+            message = (f"It understood: {understood} " if understood else "") + where
+            self.add(InfoBar("info", title, message), 16)
 
         if d.evidence_cards:
             self.add(Text("Evidence", "body_strong"))

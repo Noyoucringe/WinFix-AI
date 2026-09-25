@@ -26,6 +26,16 @@ from PySide6.QtWidgets import (
 )
 
 
+def _real_chat() -> dict:
+    from app.llm import provider
+
+    return {cls: cls._chat for cls in (provider.AnthropicProvider,
+                                       provider.OpenAICompatibleProvider)}
+
+
+_REAL_CHAT = _real_chat()  # captured at import, before any sandbox patching
+
+
 @contextlib.contextmanager
 def sandbox(folder: Path):
     """Replace every outward-facing side effect for the duration of the test."""
@@ -59,8 +69,8 @@ def sandbox(folder: Path):
     autostart.set_enabled = set_autostart
     autostart.is_enabled = lambda: enabled["on"]
     credentials._keyring = lambda: None  # keys typed in the test stay in memory
-    provider.OpenAICompatibleProvider._chat = lambda self, system, user: "OK"
-    provider.AnthropicProvider._chat = lambda self, system, user: "OK"
+    provider.OpenAICompatibleProvider._chat = lambda self, system, user, *a, **k: "OK"
+    provider.AnthropicProvider._chat = lambda self, system, user, *a, **k: "OK"
     try:
         yield
     finally:
@@ -208,3 +218,62 @@ def wait_until(predicate: Callable[[], bool], timeout: float = 60.0) -> bool:
             return True
         time.sleep(0.02)
     return False
+
+
+def ai_stack_check() -> str:
+    """Run both AI providers against a stub server on 127.0.0.1 (nothing leaves
+    the PC). Proves the packaged Anthropic SDK and HTTP stack work end to end."""
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    import anthropic
+
+    from app.core.models import Category
+    from app.llm.provider import AnthropicProvider, OpenAICompatibleProvider
+
+    answer = ('{"category": "graphics", "restated_problem": "GPU lag.", '
+              '"checks": ["get_gpu_usage"], "reasoning": "Measure the GPU."}')
+    seen: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers["Content-Length"]))
+            seen.append(self.path)
+            if self.path.startswith("/v1/messages"):
+                payload = {"id": "msg_selftest", "type": "message", "role": "assistant",
+                           "model": "claude-opus-5", "stop_reason": "end_turn",
+                           "stop_sequence": None, "content": [{"type": "text", "text": answer}],
+                           "usage": {"input_tokens": 1, "output_tokens": 1}}
+            else:
+                payload = {"choices": [{"message": {"content": answer}}]}
+            data = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    url = f"http://127.0.0.1:{server.server_port}"
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        claude = AnthropicProvider(endpoint="https://api.anthropic.com", model="claude-opus-5",
+                                   api_key="selftest")
+        claude._client = lambda: anthropic.Anthropic(api_key="selftest", base_url=url,
+                                                     max_retries=0, timeout=20)
+        local = OpenAICompatibleProvider(endpoint=url + "/v1", model="selftest", api_key=None)
+        # The sandbox stubs AI calls for the settings pages; this check needs the
+        # real request code, so bind the unpatched implementations.
+        for provider in (claude, local):
+            provider._chat = _REAL_CHAT[type(provider)].__get__(provider)
+        results = [p.understand("my gpu is laggy", ["get_gpu_usage"]) for p in (claude, local)]
+    finally:
+        server.shutdown()
+    for provider, result in zip(("Claude", "Local AI"), results):
+        if result is None or result.category != Category.GRAPHICS:
+            raise AssertionError(f"{provider} request failed")
+    return f"Claude SDK {anthropic.__version__} and local AI answered ({len(seen)} requests)"

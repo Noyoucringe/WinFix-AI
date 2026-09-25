@@ -12,9 +12,11 @@ from app import ENGINE_VERSION, __version__
 from app.core import autostart, credentials
 from app.core.config import get_settings, user_data_dir
 from app.core.logging_setup import get_logger
-from app.core.privacy import ITEM_EVENTS, ITEM_MEASUREMENTS, ITEM_PROCESS_NAMES
+from app.core.privacy import ITEM_EVENTS, ITEM_MEASUREMENTS, ITEM_PROBLEM, ITEM_PROCESS_NAMES
 from app.core.user_settings import (
     DEFAULT_ENDPOINTS,
+    DEFAULT_LOCAL_ENDPOINT,
+    DEFAULT_LOCAL_MODEL,
     DEFAULT_MODELS,
     PROVIDER_LABELS,
     EndpointError,
@@ -142,7 +144,8 @@ class SettingsPage(Page):
 
     def on_show(self, **params) -> None:
         current = get_store().load()
-        self.ai_row.value.setText("Cloud" if current.analysis == "cloud" else "Local")
+        self.ai_row.value.setText({"cloud": "Cloud AI", "local_ai": "Local AI model"}.get(
+            current.analysis, "Built-in"))
         self.autostart.blockSignals(True)
         self.autostart.setChecked(autostart.is_enabled())
         self.autostart.blockSignals(False)
@@ -225,23 +228,69 @@ class AIProviderPage(Page):
         self.add(Text("Analysis", "body_strong"))
         self.add(8)
         choices = ListCard()
-        self.local = _ChoiceRow("pc", "Local", "Runs on this PC. Nothing leaves your device.")
-        self.cloud = _ChoiceRow("cloud", "Cloud", "Uses a cloud AI provider for deeper "
-                                "analysis. Only the items you allow below are sent.")
+        self.local = _ChoiceRow("pc", "Built-in analysis",
+                                "Rules that interpret the measurements on this PC. No AI "
+                                "model is used and nothing leaves your device.")
+        self.local_ai = _ChoiceRow("developer_board", "Local AI model",
+                                   "An AI model running on this PC (Ollama or LM Studio) "
+                                   "reads your problem and leads the investigation. Nothing "
+                                   "leaves your device.")
+        self.cloud = _ChoiceRow("cloud", "Cloud AI",
+                                "Claude or another cloud AI reads your problem and leads the "
+                                "investigation. Only the items you allow below are sent.")
         group = QButtonGroup(self)
-        for choice in (self.local, self.cloud):
+        for choice in (self.local, self.local_ai, self.cloud):
             group.addButton(choice.radio)
             choices.add_row(choice)
         self.local.radio.clicked.connect(lambda: self._set_analysis("local"))
+        self.local_ai.radio.clicked.connect(lambda: self._set_analysis("local_ai"))
         self.cloud.radio.clicked.connect(lambda: self._set_analysis("cloud"))
         self.add(choices)
+
+        # Local AI model details
+        self.local_section = QWidget()
+        local = vbox(spacing=4)
+        self.local_section.setLayout(local)
+        local.addSpacing(20)
+        local.addWidget(Text("Local AI model", "body_strong"))
+        local.addSpacing(4)
+        self.local_endpoint = text_field(DEFAULT_LOCAL_ENDPOINT, width=240,
+                                         accessible_name="Local AI address")
+        self.local_endpoint.editingFinished.connect(self._save_local_endpoint)
+        self.local_endpoint_row = SettingsRow(
+            "globe", "Address", "Ollama: http://localhost:11434/v1 · LM Studio: "
+            "http://localhost:1234/v1", self.local_endpoint)
+        local.addWidget(self.local_endpoint_row)
+        self.local_model = text_field(DEFAULT_LOCAL_MODEL, width=240,
+                                      accessible_name="Local AI model name")
+        self.local_model.editingFinished.connect(
+            lambda: self._loading or get_store().update(
+                local_model=self.local_model.text().strip()[:120]))
+        local.addWidget(SettingsRow("developer_board", "Model",
+                                    "The model name, as shown by 'ollama list'",
+                                    self.local_model))
+        self.local_test = Button("Test connection", "Standard")
+        self.local_test.clicked.connect(lambda: self._test(self.local_test,
+                                                           self.local_test_status))
+        self.local_test_status = Status("info", "", "caption", 12)
+        self.local_test_status.hide()
+        local.addSpacing(4)
+        local.addLayout(hbox(self.local_test, self.local_test_status, spacing=12,
+                             stretch_at=-1))
+        local.addSpacing(4)
+        local.addWidget(Footnote(
+            "Set up once: install Ollama from ollama.com, then run 'ollama pull llama3.1' "
+            "in a terminal (or start LM Studio's local server). No API key is needed and "
+            "nothing leaves this PC. Larger models understand problems better but answer "
+            "more slowly."))
+        self.add(self.local_section)
 
         # Cloud provider details
         self.provider_section = QWidget()
         section = vbox(spacing=4)
         self.provider_section.setLayout(section)
         section.addSpacing(20)
-        section.addWidget(Text("Cloud provider", "body_strong"))
+        section.addWidget(Text("Cloud AI provider", "body_strong"))
         section.addSpacing(4)
         self.format = ComboBox([(label, key) for key, label in PROVIDER_LABELS.items()])
         self.format.setMinimumWidth(240)
@@ -273,7 +322,7 @@ class AIProviderPage(Page):
         self.key_row = SettingsRow("key", "API key", "No key saved.", key_controls)
         section.addWidget(self.key_row)
         self.test = Button("Test connection", "Standard")
-        self.test.clicked.connect(self._test)
+        self.test.clicked.connect(lambda: self._test(self.test, self.test_status))
         self.test_status = Status("info", "", "caption", 12)
         self.test_status.hide()
         section.addSpacing(4)
@@ -287,6 +336,13 @@ class AIProviderPage(Page):
         section.addSpacing(20)
         section.addWidget(Text("Sent to the cloud provider", "body_strong"))
         section.addSpacing(4)
+        problem_toggle = ToggleSwitch(True)
+        problem_toggle.setEnabled(False)
+        problem_toggle.setAccessibleName(ITEM_PROBLEM)
+        section.addWidget(SettingsRow("document", ITEM_PROBLEM,
+                                      "What you typed, with names, addresses and anything "
+                                      "that looks like a key removed. Required.",
+                                      problem_toggle))
         measurements = ToggleSwitch(True)
         measurements.setEnabled(False)
         measurements.setAccessibleName(ITEM_MEASUREMENTS)
@@ -316,7 +372,11 @@ class AIProviderPage(Page):
     def on_show(self, **params) -> None:
         self._loading = True
         current = get_store().load()
-        (self.cloud if current.analysis == "cloud" else self.local).radio.setChecked(True)
+        {"cloud": self.cloud, "local_ai": self.local_ai}.get(
+            current.analysis, self.local).radio.setChecked(True)
+        self.local_endpoint.setText(current.local_endpoint)
+        self.local_model.setText(current.local_model)
+        self.local_test_status.hide()
         self.format.set_value(current.provider_type)
         self.endpoint.setText(current.endpoint)
         self.model.setText(current.model)
@@ -330,7 +390,8 @@ class AIProviderPage(Page):
         current = get_store().load()
         provider = current.provider_type
         cloud = current.analysis == "cloud"
-        self.provider_section.setEnabled(cloud)
+        self.provider_section.setVisible(cloud)
+        self.local_section.setVisible(current.analysis == "local_ai")
         self.endpoint.setPlaceholderText(DEFAULT_ENDPOINTS[provider])
         self.model.setPlaceholderText(DEFAULT_MODELS[provider])
         has_key = bool(credentials.get_api_key(provider))
@@ -346,16 +407,22 @@ class AIProviderPage(Page):
             item = self.banner_host.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        if not cloud:
-            bar = InfoBar("info", "Cloud analysis is off.",
-                          "All diagnostic information is processed on this PC.")
+        if current.analysis == "local":
+            bar = InfoBar("info", "Built-in analysis is on.",
+                          "WinFix understands your problem with offline rules. Choose an AI "
+                          "option to let a model read your description and lead the "
+                          "investigation.")
+        elif current.analysis == "local_ai":
+            bar = InfoBar("info", "Local AI model is on.",
+                          "An AI model on this PC leads the investigation. If it isn't "
+                          "running, WinFix falls back to built-in analysis.")
         elif not has_key:
-            bar = InfoBar("caution", "Add an API key to use cloud analysis.",
-                          "Until then WinFix analyzes everything on this PC.")
+            bar = InfoBar("caution", "Add an API key to use cloud AI.",
+                          "Until then WinFix uses built-in analysis on this PC.")
         else:
-            bar = InfoBar("info", "Cloud analysis is on.",
-                          "Diagnostic information is processed locally unless cloud AI "
-                          "analysis is enabled.")
+            bar = InfoBar("info", "Cloud AI is on.",
+                          "The AI reads your problem, chooses read-only checks and explains "
+                          "the result. Fixes still always need your approval.")
         self.banner_host.addWidget(bar)
 
     def _set_analysis(self, analysis: str) -> None:
@@ -431,24 +498,41 @@ class AIProviderPage(Page):
                 self._refresh()
         dialog.open_async(done)
 
-    def _test(self) -> None:
+    def _save_local_endpoint(self) -> None:
+        if self._loading:
+            return
+        try:
+            url = validate_endpoint(self.local_endpoint.text())
+        except EndpointError as exc:
+            self.local_endpoint.set_error(True)
+            self.local_endpoint_row.set_description(str(exc), "critical")
+            return
+        self.local_endpoint.set_error(False)
+        self.local_endpoint_row.set_description(
+            "Ollama: http://localhost:11434/v1 · LM Studio: http://localhost:1234/v1")
+        get_store().update(local_endpoint=url)
+        self.local_endpoint.setText(url)
+
+    def _test(self, button: Button, status: Status) -> None:
         from app.llm.provider import get_provider
 
-        current = get_store().load().model_copy(update={"analysis": "cloud"})
-        provider = get_provider(current)
-        self.test.setEnabled(False)
-        self.test_status.set("running", "Testing...")
-        self.test_status.show()
+        provider = get_provider(get_store().load())
+        button.setEnabled(False)
+        status.set("running", "Testing...")
+        status.show()
 
         def done(result) -> None:
             ok, message = result
-            self.test.setEnabled(True)
-            self.test_status.set("success" if ok else "critical", message)
+            button.setEnabled(True)
+            status.set("success" if ok else "critical", message)
 
         def failed(message: str, _detail: str) -> None:
-            self.test.setEnabled(True)
-            self.test_status.set("critical", "The connection test failed.")
+            button.setEnabled(True)
+            status.set("critical", "The connection test failed.")
 
+        if not hasattr(provider, "test_connection"):
+            done((False, "Choose an AI option first."))
+            return
         run_async(provider.test_connection, done, failed)
 
 

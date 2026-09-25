@@ -37,6 +37,10 @@ from app.knowledge.categories import get_category_spec
 from app.knowledge.remediations import fix_info
 from app.llm.provider import MAX_FOLLOW_UPS, LLMProvider, get_provider
 
+# With AI, checks kept free for the model's own follow-up rounds.
+AI_FOLLOW_UP_BUDGET = 4
+MAX_AI_ROUNDS = 3
+
 logger = get_logger(__name__)
 
 
@@ -141,16 +145,30 @@ class Agent:
         if not session.timeline:
             session.add_event("started", "Session started")
 
-        plan = self.planner.plan(problem, self.depth)
+        emit("understanding")
+        plan = self.planner.plan(problem, self.depth,
+                                 max_initial=max(1, self.max_steps - AI_FOLLOW_UP_BUDGET))
         session.plan = plan
         session.checks = [self._record(t) for t in plan.diagnostic_tools[: self.max_steps]]
+        if plan.planned_by == "ai":
+            session.add_event("ai", "AI read your description", plan.understood)
         step("plan", plan.rationale)
         emit("plan", message=plan.rationale)
 
         try:
             self._run_checks(session, [c.tool for c in session.checks], cancel, emit, step)
-            follow_ups = self._follow_up_tools(session)
-            if follow_ups:
+            # Autonomous investigation: with AI, the model decides after each round
+            # whether it needs more evidence (bounded by the step limit).
+            rounds = MAX_AI_ROUNDS if plan.planned_by == "ai" else 1
+            for _ in range(rounds):
+                follow_ups = self._follow_up_tools(session)
+                reasoning = getattr(self.provider, "last_reasoning", "")
+                if reasoning:
+                    session.add_event("ai", "AI: " + reasoning)
+                    step("reasoning", reasoning)
+                    emit("plan", message=reasoning)
+                if not follow_ups:
+                    break
                 session.checks.extend(self._record(t) for t in follow_ups)
                 emit("plan", message="Additional checks", data={"follow_up": follow_ups})
                 self._run_checks(session, follow_ups, cancel, emit, step)
@@ -207,6 +225,8 @@ class Agent:
         """Extra read-only checks chosen from the evidence so far (bounded)."""
         budget = self.max_steps - len(session.diagnostics)
         if budget <= 0:
+            if hasattr(self.provider, "last_reasoning"):
+                self.provider.last_reasoning = ""
             return []
         requested = self.provider.follow_up_tools(session, self.remaining_candidates(session))
         accepted: list[str] = []

@@ -205,3 +205,16 @@ def pick_adapter(results: Results, prefer_wireless: bool = False) -> str | None:
     if len(up) == 1:
         return up[0]["name"]
     return None
+
+
+def gpu_usage(results: Results) -> dict | None:
+    return data(results, "get_gpu_usage")
+
+
+def gpu_adapters(results: Results) -> list[dict] | None:
+    d = data(results, "get_gpu_info")
+    return None if d is None else d.get("adapters") or []
+
+
+def display_driver_errors(results: Results) -> dict | None:
+    return data(results, "get_display_driver_errors")

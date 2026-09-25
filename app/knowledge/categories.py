@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.core.models import Category
 
@@ -27,6 +27,9 @@ class CategorySpec:
     general_fix: str | None = None
     verification_tools: tuple[str, ...] = ()
     icon: str = "wrench"
+    # Words naming the thing that's broken ("gpu", "printer"). They outweigh
+    # symptom words ("slow", "laggy"), so "my gpu is laggy" means graphics.
+    subjects: tuple[str, ...] = ()
 
 
 _PERF = ("get_cpu_usage", "get_memory_usage", "get_disk_usage", "get_running_processes",
@@ -169,8 +172,8 @@ CATEGORIES: dict[Category, CategorySpec] = {
     Category.DEVICE_DRIVER: CategorySpec(
         Category.DEVICE_DRIVER, "Device isn't working",
         ("driver", "drivers", "device", "not recognized", "device manager", "unknown device",
-         "usb", "webcam", "camera", "keyboard", "mouse", "touchpad", "trackpad", "monitor",
-         "display", "screen", "graphics", "gpu"),
+         "usb", "webcam", "camera", "keyboard", "mouse", "touchpad", "trackpad",
+         "webcam not working"),
         "A device or its driver is malfunctioning.",
         ("get_problem_devices", "get_driver_information", "get_recent_system_errors"),
         (),
@@ -185,7 +188,45 @@ CATEGORIES: dict[Category, CategorySpec] = {
         remediation_tools=("restart_windows_search",),
         general_fix="restart_windows_search",
         verification_tools=("get_search_indexer_status",), icon="search"),
+    Category.GRAPHICS: CategorySpec(
+        Category.GRAPHICS, "Graphics or GPU problem",
+        ("gpu", "graphics", "graphics card", "video card", "nvidia", "geforce", "radeon",
+         "amd gpu", "intel arc", "fps", "frame rate", "frames", "game", "gaming", "games",
+         "stutter", "stuttering", "screen flicker", "flicker", "flickering", "black screen",
+         "screen goes black", "artifacts", "tearing", "display driver", "driver crashed",
+         "monitor", "display", "screen", "resolution", "refresh rate", "graphics driver",
+         "gpu driver", "nvidia driver", "amd driver", "intel graphics"),
+        "Graphics are slow, stutter, flicker or the display driver crashes.",
+        ("get_gpu_usage", "get_gpu_info", "get_display_driver_errors", "get_cpu_usage",
+         "get_memory_usage", "get_running_processes", "get_problem_devices"),
+        ("get_recent_system_errors", "get_driver_information", "get_disk_activity"),
+        verification_tools=("get_gpu_usage",), icon="pc",
+        subjects=("gpu", "graphics", "graphics card", "video card", "nvidia", "geforce",
+                  "radeon", "display driver", "fps", "frame rate", "monitor", "screen",
+                  "display")),
 }
+
+# Subjects for the other categories (see CategorySpec.subjects).
+_SUBJECTS = {
+    Category.HIGH_CPU: ("cpu", "processor"),
+    Category.HIGH_MEMORY: ("ram", "memory"),
+    Category.LOW_DISK_SPACE: ("disk", "storage", "c drive", "hard drive", "ssd"),
+    Category.INTERNET_DOWN: ("internet", "ethernet", "router", "modem", "lan"),
+    Category.WIFI_DISCONNECTING: ("wifi", "wi-fi", "wireless", "wlan", "hotspot"),
+    Category.DNS_PROBLEMS: ("dns", "website", "websites", "webpage"),
+    Category.WINDOWS_UPDATE: ("windows update", "update", "updates"),
+    Category.BLUETOOTH: ("bluetooth", "airpods", "earbuds", "headphones"),
+    Category.AUDIO: ("audio", "sound", "speaker", "speakers", "microphone", "mic",
+                     "headset"),
+    Category.PRINTER: ("printer", "print spooler", "printing"),
+    Category.APP_CRASHES: ("app", "program", "application", "blue screen", "bsod"),
+    Category.STARTUP_PROBLEMS: ("startup", "boot", "booting", "start up"),
+    Category.DEVICE_DRIVER: ("usb", "webcam", "camera", "keyboard", "mouse", "touchpad",
+                             "trackpad", "driver", "device"),
+    Category.WINDOWS_SEARCH: ("search", "windows search", "indexing"),
+}
+CATEGORIES = {cat: (replace(spec, subjects=_SUBJECTS[cat]) if cat in _SUBJECTS else spec)
+              for cat, spec in CATEGORIES.items()}
 
 # Fallback plan when a problem can't be classified: a broad, cheap sweep.
 GENERAL_TOOLS = ("get_cpu_usage", "get_memory_usage", "get_disk_usage",
@@ -233,6 +274,9 @@ def classify(problem: str) -> Category:
                 score += 2 if " " in kw or "-" in kw else 1
             elif _typo_hits(tokens, kw):
                 score += 0.75
+        for subject in spec.subjects:
+            if _hits(text, subject) or _typo_hits(tokens, subject):
+                score += 3
         if score > best[0]:
             best = (score, spec.category)
     return best[1]
