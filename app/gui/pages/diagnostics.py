@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
@@ -21,15 +22,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app import __version__
+from app.core.logging_setup import get_logger
 from app.core.tool_registry import get_registry
 from app.diagnostics.live import LiveSampler
 from app.gui import icons, theme
 from app.gui.icons import IconLabel
 from app.gui.pages.base import AppContext, Page, header
 from app.gui.widgets.composite import FlowGrid, KeyValueTable
-from app.gui.widgets.core import Button, Card, FlowLayout, Text, font, hbox
+from app.gui.widgets.core import Button, Card, FlowLayout, Text, font, hbox, host
 from app.gui.widgets.status import InfoBar, ProgressBar, ProgressRing, Status
 from app.gui.workers import run_async
+
+logger = get_logger(__name__)
 
 TABS = [("system", "System", "pc"), ("performance", "Performance", "speed"),
         ("storage", "Storage", "disk"), ("network", "Network", "wifi"),
@@ -248,7 +253,22 @@ class DiagnosticsPage(Page):
     def _show_tab(self, key: str) -> None:
         self.current = key
         if key not in self.pages:
-            page = self._build(key)
+            try:
+                page = self._build(key)
+            except Exception as exc:  # noqa: BLE001 - show the problem in the tab
+                logger.error("diagnostics tab failed to build",
+                             extra={"component": "diagnostics", "event": key,
+                                    "status": type(exc).__name__})
+                page = QWidget()
+                box = QVBoxLayout(page)
+                box.setContentsMargins(0, 0, 0, 0)
+                box.addWidget(InfoBar("caution", "This section couldn't be shown.",
+                                      f"{type(exc).__name__}: {exc}"[:200]))
+                self.pages[key] = page
+                self.stack.addWidget(page)
+                self.stack.setCurrentWidget(page)
+                self.timer.stop()
+                return
             self.pages[key] = page
             self.stack.addWidget(page)
         self.stack.setCurrentWidget(self.pages[key])
@@ -267,7 +287,8 @@ class DiagnosticsPage(Page):
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-        layout.addWidget(hbox(ProgressRing(16), Text("Collecting…", "body", "secondary")))
+        layout.addWidget(host(hbox(ProgressRing(16), Text("Collecting…", "body", "secondary"),
+                                   stretch_at=-1)))
         return widget
 
     def _build_performance(self) -> QWidget:
@@ -386,14 +407,24 @@ class DiagnosticsPage(Page):
 
     def _render(self, key: str, results: dict) -> None:
         self.data[key] = results
-        page = self.pages[key]
+        page = self.pages.get(key)
+        if page is None or page.layout() is None:
+            return
         layout = page.layout()
         while layout.count():
             item = layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         renderer = getattr(self, f"_render_{key}")
-        for widget in renderer(results):
+        try:
+            widgets = renderer(results)
+        except Exception as exc:  # noqa: BLE001 - one bad value must not break the page
+            logger.error("diagnostics tab failed to render",
+                         extra={"component": "diagnostics", "event": key,
+                                "status": type(exc).__name__})
+            widgets = [InfoBar("caution", "Some information couldn't be shown.",
+                               f"{type(exc).__name__}: {exc}"[:200])]
+        for widget in widgets:
             layout.addWidget(widget)
         layout.addStretch(1)
 
@@ -424,27 +455,26 @@ class DiagnosticsPage(Page):
         rows = [("Product", win.get("product", "—")),
                 ("Edition", win.get("edition") or "—"),
                 ("Version", win.get("display_version") or win.get("version", "—")),
-                ("Build", f"{win.get('build')}.{win.get('ubr')}" if win.get("build") else "—")]
+                ("Build", (f"{win.get('build')}.{win.get('ubr')}" if win.get("ubr") is not None
+                           else str(win.get("build"))) if win.get("build") else "—")]
         out.append(self._kv_card("Windows", rows))
         out.append(self._kv_card("Device", [
             ("Processor cores", f"{info.get('cpu_count_physical', '—')} physical, "
                                 f"{info.get('cpu_count_logical', '—')} logical"),
             ("Installed memory", _gb(info.get("memory_total_gb"))),
             ("Architecture", info.get("architecture", "—"))]))
-        boot_time = boot.get("boot_time")
         out.append(self._kv_card("Uptime", [
-            ("Last started", datetime.fromisoformat(boot_time).astimezone()
-             .strftime("%b %d, %I:%M %p") if boot_time else "—"),
-            ("Running for", _uptime(boot.get("uptime_seconds", 0)))]))
+            ("Last started", _when(boot.get("boot_time"), "%b %d, %I:%M %p")),
+            ("Running for", _uptime(boot.get("uptime_seconds") or 0))]))
         pending = r["get_pending_reboot"]
         unavailable = self._unavailable(pending, "Restart status")
         if unavailable:
             out.append(unavailable)
         else:
-            d = pending["data"]
+            d = pending.get("data") or {}
+            reasons = ", ".join(d.get("reasons") or []) or "yes"
             out.append(self._kv_card("Updates", [
-                ("Restart pending", "Yes — " + ", ".join(d["reasons"]) if d["reboot_pending"]
-                 else "No")]))
+                ("Restart pending", f"Yes — {reasons}" if d.get("reboot_pending") else "No")]))
         return out
 
     def _render_storage(self, r: dict) -> list[QWidget]:
@@ -454,33 +484,42 @@ class DiagnosticsPage(Page):
         rows = parts.get("partitions", [])
         table.setRowCount(len(rows))
         for i, p in enumerate(rows):
-            for c, text in enumerate([p["mountpoint"], p["fstype"], f"{p['usage_percent']:.1f}%",
-                                      _gb(p["free_gb"]), _gb(p["total_gb"], 0)]):
+            used = p.get("usage_percent")
+            for c, text in enumerate([p.get("mountpoint") or p.get("device") or "—",
+                                      p.get("fstype") or "—",
+                                      "—" if used is None else f"{used:.1f}%",
+                                      _gb(p.get("free_gb")), _gb(p.get("total_gb"), 0)]):
                 table.setItem(i, c, QTableWidgetItem(text))
         _fit(table)
         out.append(Text("Drives", "body_strong"))
         out.append(table)
         rec = r["get_reclaimable_space"].get("data")
         if rec:
+            bin_mb = rec.get("recycle_bin_mb")
             out.append(self._kv_card("Reclaimable space", [
-                ("Temporary files", _size(rec["temp_mb"])),
-                ("Recycle Bin", "—" if rec["recycle_bin_mb"] is None else
-                 f"{_size(rec['recycle_bin_mb'])} in {rec['recycle_bin_items']} items")]))
+                ("Temporary files", _size(rec.get("temp_mb") or 0)),
+                ("Recycle Bin", "—" if bin_mb is None else
+                 f"{_size(bin_mb)} in {rec.get('recycle_bin_items') or 0} items")]))
         return out
 
     def _render_network(self, r: dict) -> list[QWidget]:
         out = []
         data = r["get_network_adapters"].get("data") or {}
         adapters = [a for a in data.get("adapters", []) if not a.get("virtual")]
+        interfaces = (r.get("get_ip_configuration", {}).get("data") or {}).get("interfaces", {})
         table = _table(["Adapter", "Status", "Type", "Speed", "IPv4 address"])
         table.setRowCount(len(adapters))
         for i, a in enumerate(adapters):
-            item = QTableWidgetItem("Connected" if a["is_up"] else "Disconnected")
-            item.setIcon(_status_icon("success" if a["is_up"] else "queued"))
-            cells = [QTableWidgetItem(a["name"]), item,
-                     QTableWidgetItem("Wi-Fi" if a["wireless"] else "Wired/other"),
-                     QTableWidgetItem(f"{a['speed_mbps']} Mbps" if a["speed_mbps"] else "—"),
-                     QTableWidgetItem(", ".join(a["ipv4"]) or "—")]
+            up = bool(a.get("is_up"))
+            name = a.get("name") or "—"
+            ipv4 = [e.get("address") for e in interfaces.get(name, [])
+                    if e.get("family") == "AF_INET" and e.get("address")]
+            item = QTableWidgetItem("Connected" if up else "Disconnected")
+            item.setIcon(_status_icon("success" if up else "queued"))
+            cells = [QTableWidgetItem(name), item,
+                     QTableWidgetItem("Wi-Fi" if a.get("wireless") else "Wired/other"),
+                     QTableWidgetItem(f"{a['speed_mbps']} Mbps" if a.get("speed_mbps") else "—"),
+                     QTableWidgetItem(", ".join(ipv4) or "—")]
             for c, cell in enumerate(cells):
                 table.setItem(i, c, cell)
         _fit(table)
@@ -489,7 +528,8 @@ class DiagnosticsPage(Page):
         self._net_status = Text("Tests your router, DNS and internet connection "
                                 "(read-only).", "caption", "secondary")
         test.clicked.connect(self._run_network_tests)
-        out.append(Card_with(hbox(test, self._net_status, spacing=12, stretch_at=1)))
+        self._net_status.setWordWrap(True)
+        out.append(Card_with(hbox(test, self._net_status, spacing=12)))
         return out
 
     def _run_network_tests(self) -> None:
@@ -498,6 +538,9 @@ class DiagnosticsPage(Page):
 
         def run():
             return {t: tool(t) for t in ("ping_gateway", "test_dns", "test_internet")}
+
+        def failed(message: str, _detail: str) -> None:
+            self._net_status.setText(f"The connection tests couldn't run: {message}")
 
         def done(results: dict) -> None:
             def ok(tool, key):
@@ -508,22 +551,23 @@ class DiagnosticsPage(Page):
                 f"{ok('test_dns', 'dns_working')}   ·   Internet: "
                 f"{ok('test_internet', 'internet_reachable')}")
 
-        run_async(run, done)
+        run_async(run, done, failed)
 
     def _render_services(self, r: dict) -> list[QWidget]:
         result = r["get_important_services"]
         unavailable = self._unavailable(result, "Service status")
         if unavailable:
             return [unavailable]
-        services = result["data"]["services"]
+        services = (result.get("data") or {}).get("services") or {}
         table = _table(["Service", "Status", "Startup type", "Health"])
         table.setRowCount(len(services))
         for i, s in enumerate(services.values()):
-            status = QTableWidgetItem(s["status_text"])
+            status = QTableWidgetItem(s.get("status_text") or "—")
             status.setIcon(_status_icon("success" if s.get("running") else "queued"))
             health = QTableWidgetItem("Healthy" if s.get("healthy") else "Needs attention")
             health.setIcon(_status_icon("success" if s.get("healthy") else "caution"))
-            for c, cell in enumerate([QTableWidgetItem(s["label"]), status,
+            for c, cell in enumerate([QTableWidgetItem(s.get("label") or s.get("name") or "—"),
+                                      status,
                                       QTableWidgetItem((s.get("start_type") or "—").title()),
                                       health]):
                 table.setItem(i, c, cell)
@@ -539,7 +583,7 @@ class DiagnosticsPage(Page):
             if unavailable:
                 out.append(unavailable)
                 continue
-            devices = result["data"].get("devices", [])
+            devices = (result.get("data") or {}).get("devices") or []
             out.append(Text(title, "body_strong"))
             if not devices:
                 out.append(Status("success", "No problems reported"))
@@ -549,7 +593,7 @@ class DiagnosticsPage(Page):
             for i, d in enumerate(devices):
                 status = QTableWidgetItem(d.get("status") or "—")
                 status.setIcon(_status_icon("success" if d.get("status") == "OK" else "caution"))
-                for c, cell in enumerate([QTableWidgetItem(d["name"]),
+                for c, cell in enumerate([QTableWidgetItem(d.get("name") or "—"),
                                           QTableWidgetItem(d.get("class") or "—"), status]):
                     table.setItem(i, c, cell)
             _fit(table)
@@ -557,8 +601,8 @@ class DiagnosticsPage(Page):
         drivers = r["get_driver_information"].get("data")
         if drivers:
             out.append(self._kv_card("Drivers", [
-                ("Installed drivers", str(drivers["count"])),
-                ("Unsigned drivers", str(drivers["unsigned_count"]))]))
+                ("Installed drivers", str(drivers.get("count", "—"))),
+                ("Unsigned drivers", str(drivers.get("unsigned_count", "—")))]))
         return out
 
     def _render_events(self, r: dict) -> list[QWidget]:
@@ -570,7 +614,7 @@ class DiagnosticsPage(Page):
             if unavailable:
                 out.append(unavailable)
                 continue
-            events = result["data"]["events"]
+            events = (result.get("data") or {}).get("events") or []
             out.append(Text(f"{title} · errors in the last 24 hours", "body_strong"))
             if not events:
                 out.append(Status("success", "No errors recorded"))
@@ -578,10 +622,9 @@ class DiagnosticsPage(Page):
             table = _table(["Time", "Source", "Message"], stretch=2)
             table.setRowCount(len(events))
             for i, e in enumerate(events):
-                when = datetime.fromisoformat(e["time"]).strftime("%b %d %H:%M") \
-                    if e.get("time") else "—"
-                level = QTableWidgetItem(when)
-                level.setIcon(_status_icon("critical" if e["level"] == "Critical" else "caution"))
+                level = QTableWidgetItem(_when(e.get("time")))
+                level.setIcon(_status_icon("critical" if e.get("level") == "Critical"
+                                           else "caution"))
                 for c, cell in enumerate([level, QTableWidgetItem(e.get("source") or "—"),
                                           QTableWidgetItem(e.get("message") or "")]):
                     table.setItem(i, c, cell)
@@ -593,22 +636,47 @@ class DiagnosticsPage(Page):
     def _export(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self, "Export diagnostics",
-            f"winfix-diagnostics-{datetime.now():%Y%m%d-%H%M}.json", "JSON (*.json)")
+            str(Path.home() / f"winfix-diagnostics-{datetime.now():%Y%m%d-%H%M}.json"),
+            "JSON (*.json)")
         if not path:
             return
-        try:
+        self.ctx.notify("Exporting diagnostics", "Collecting every section. This takes a "
+                        "few seconds.")
+        run, cached = self._runner(), dict(self.data)
+
+        def collect() -> dict:
+            sections = {}
+            for key, tools in TAB_TOOLS.items():
+                sections[key] = cached.get(key) or {t: run(t) for t in tools}
+            try:
+                sample = LiveSampler().sample()
+            except Exception as exc:  # noqa: BLE001 - export what we have
+                sample = {"error": f"{type(exc).__name__}: {exc}"}
+            report = {"app": "WinFix AI", "version": __version__,
+                      "exported_at": datetime.now().astimezone().isoformat(),
+                      "performance": sample, "sections": sections}
             with open(path, "w", encoding="utf-8") as fh:
-                json.dump(self.data, fh, indent=2, default=str)
-        except OSError as exc:
-            self.ctx.error("Couldn't export diagnostics", str(exc))
-            return
-        self.ctx.notify("Diagnostics exported", path)
+                json.dump(report, fh, indent=2, default=str)
+            return path
+
+        run_async(collect, lambda saved: self.ctx.notify("Diagnostics exported", saved),
+                  lambda m, d: self.ctx.error("Couldn't export diagnostics", m, d))
 
 
 def Card_with(layout) -> Card:  # noqa: N802 - small factory
     card = Card(padding=(16, 12, 16, 12))
     card.add(layout)
     return card
+
+
+def _when(value, fmt: str = "%b %d %H:%M") -> str:
+    """Local time for an ISO timestamp; anything unparseable shows as-is."""
+    if not value:
+        return "—"
+    try:
+        return datetime.fromisoformat(str(value)).astimezone().strftime(fmt)
+    except ValueError:
+        return str(value)[:19]
 
 
 def _size(mb: float) -> str:

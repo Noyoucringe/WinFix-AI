@@ -148,3 +148,106 @@ def test_empty_history_message_is_fully_visible(qapp, window):
     # The whole sentence fits in the label (it wraps rather than clipping).
     needed = label.heightForWidth(label.width())
     assert label.width() >= 200 and label.height() >= needed
+
+
+def _ok(data):
+    return {"success": True, "data": data, "error": None}
+
+
+WINDOWS_RESULTS = {
+    "system": {
+        "get_windows_version": _ok({"is_windows": True, "product": "Windows 11 Pro",
+                                    "edition": "Professional", "display_version": "24H2",
+                                    "build": 26100, "ubr": 2033, "version": "10.0.26100"}),
+        "get_system_info": _ok({"cpu_count_physical": 8, "cpu_count_logical": 16,
+                                "memory_total_gb": 31.7, "architecture": "AMD64"}),
+        "get_boot_time": _ok({"boot_time": "2026-09-24T08:00:00+00:00",
+                              "uptime_seconds": 7200.0}),
+        "get_pending_reboot": _ok({"reboot_pending": True, "reasons": ["Windows Update"],
+                                   "file_operations_pending": False}),
+    },
+    "storage": {
+        "get_disk_partitions": _ok({"partition_count": 1, "partitions": [
+            {"device": "C:\\", "mountpoint": "C:\\", "fstype": "NTFS", "total_gb": 275.0,
+             "free_gb": 44.5, "usage_percent": 83.8}]}),
+        "get_reclaimable_space": _ok({"temp_mb": 1830.4, "temp_locations": [],
+                                      "recycle_bin_mb": 212.0, "recycle_bin_items": 14}),
+    },
+    "network": {
+        "get_network_adapters": _ok({"adapters": [
+            {"name": "Wi-Fi", "is_up": True, "speed_mbps": 866, "wireless": True,
+             "virtual": False},
+            {"name": "Ethernet", "is_up": False, "speed_mbps": 0, "wireless": False,
+             "virtual": False}]}),
+        "get_ip_configuration": _ok({"interfaces": {"Wi-Fi": [
+            {"family": "AF_INET", "address": "192.168.1.20", "netmask": "255.255.255.0"}]}}),
+    },
+    "services": {
+        "get_important_services": _ok({"services": {
+            "WSearch": {"name": "WSearch", "label": "Windows Search", "status_text": "Running",
+                        "start_type": "automatic", "running": True, "healthy": True},
+            "Spooler": {"name": "Spooler", "label": "Print Spooler", "status_text": "Stopped",
+                        "start_type": "manual", "running": False, "healthy": False}},
+            "unhealthy": ["Spooler"], "healthy": False}),
+    },
+    "devices": {
+        "get_problem_devices": _ok({"count": 1, "devices": [
+            {"name": "Unknown USB Device", "class": "USB", "status": "Error",
+             "problem": "CM_PROB_FAILED_START", "present": True}]}),
+        "get_bluetooth_devices": _ok({"count": 0, "devices": []}),
+        "get_driver_information": _ok({"count": 212, "unsigned_count": 0}),
+    },
+    "events": {
+        "get_recent_system_errors": _ok({"events": [
+            {"time": "2026-09-24T10:00:00.1234567+05:30", "id": 7000, "level": "Error",
+             "source": "Service Control Manager", "message": "The service failed to start."}]}),
+        "get_recent_application_errors": _ok({"events": []}),
+    },
+}
+
+
+@pytest.mark.parametrize("tab", list(WINDOWS_RESULTS))
+def test_diagnostics_tabs_render_windows_data(qapp, window, tab):
+    """Every Diagnostics tab renders real-shaped Windows results, partial results
+    and missing results without errors."""
+    import sys as _sys
+
+    errors = []
+    hook, _sys.excepthook = _sys.excepthook, lambda *exc: errors.append(exc)
+    try:
+        window.navigate("diagnostics")
+        page = window.page("diagnostics")
+        page.tabs.select(tab)
+        _settle(qapp)
+        page._render(tab, WINDOWS_RESULTS[tab])
+        partial = {t: {"success": True, "data": {}} for t in WINDOWS_RESULTS[tab]}
+        page._render(tab, partial)
+        failed = {t: {"success": False, "data": None,
+                      "error": {"type": "CommandError", "message": "boom"}}
+                  for t in WINDOWS_RESULTS[tab]}
+        page._render(tab, failed)
+        qapp.processEvents()
+    finally:
+        _sys.excepthook = hook
+    assert errors == []
+    from app.gui.widgets.status import InfoBar
+
+    shown = [b.title.text() for b in page.pages[tab].findChildren(InfoBar)]
+    assert "Some information couldn't be shown." not in shown
+
+
+def test_diagnostics_export_writes_every_section(qapp, window, tmp_path, monkeypatch):
+    import json
+
+    from PySide6.QtWidgets import QFileDialog
+
+    target = tmp_path / "diag.json"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(target), "")))
+    window.navigate("diagnostics")
+    window.page("diagnostics")._export()
+    _settle(qapp)
+    report = json.loads(target.read_text(encoding="utf-8"))
+    assert set(report["sections"]) == {"system", "storage", "network", "services",
+                                       "devices", "events"}
+    assert "cpu" in report["performance"]

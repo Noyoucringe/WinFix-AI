@@ -139,8 +139,21 @@ def file_description(path: str) -> str | None:
     key = f"\\StringFileInfo\\{lang:04x}{codepage:04x}\\FileDescription"
     if not version.VerQueryValueW(buffer, key, ctypes.byref(value), ctypes.byref(length)):
         return None
-    text = ctypes.wstring_at(value, max(0, length.value - 1)).strip()
-    return text or None
+    # Some files report the length in bytes, not characters; stop at the first
+    # NUL so we never read into the next version-info record.
+    raw = ctypes.wstring_at(value, max(0, length.value))
+    return clean_display_text(raw.split("\0", 1)[0])
+
+
+def clean_display_text(text: str | None) -> str | None:
+    """Printable text only: drops control and unassigned characters."""
+    if not text:
+        return None
+    import unicodedata
+
+    cleaned = "".join(ch for ch in text
+                      if unicodedata.category(ch)[0] not in ("C",) or ch == " ").strip()
+    return cleaned or None
 
 
 # --- user preferences ------------------------------------------------------

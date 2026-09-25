@@ -361,6 +361,10 @@ class Agent:
 
     def _runner(self, proposal: RemediationProposal):
         """Route admin-only fixes through a UAC prompt when not already elevated."""
+        from app import demo
+
+        if demo.is_active():  # demo fixes are simulated in-process, never elevated
+            return None
         if not (self.elevate and IS_WINDOWS and proposal.requires_admin and not is_admin()):
             return None
         from app.core import elevation

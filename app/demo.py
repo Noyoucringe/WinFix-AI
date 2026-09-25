@@ -92,10 +92,20 @@ def isolate() -> Path:
     return folder
 
 
+_active = False
+
+
+def is_active() -> bool:
+    """True while demo mode is on; the agent then never elevates or runs real fixes."""
+    return _active
+
+
 class DemoMode:
     """Serves recorded evidence and simulates fixes on the live registry."""
 
     def __init__(self, registry) -> None:
+        global _active
+        _active = True
         self.registry = registry
         self._original = registry.execute_tool
         self._evidence: dict = {}
@@ -133,6 +143,8 @@ class DemoMode:
         return self._original(name, arguments)
 
     def restore(self) -> None:
+        global _active
+        _active = False
         self.registry.execute_tool = self._original
 
 

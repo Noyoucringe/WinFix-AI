@@ -166,7 +166,7 @@ drivers, Bluetooth, and System and Application event logs.
 
 ```text
 app/
-  __init__.py       version (1.0.0), engine version, publisher
+  __init__.py       version (1.0.1), engine version, publisher
   main.py           entry point: GUI, --demo, --self-test, --health-check, CLI tools
   core/             models, tool registry, safety validator, planner, agent,
                     remediation/verification engines, elevation helper, history
@@ -230,10 +230,14 @@ This creates `.venv-build`, installs the requirements plus PyInstaller, and runs
 1. checks that version numbers match and scans `app/` for anything that looks like a secret,
 2. runs the whole test suite,
 3. builds `dist/WinFixAI.exe` (one file, windowed, icon, version resource
-   *WinFix AI 1.0.0 / publisher WinFix AI*),
+   *WinFix AI 1.0.1 / publisher WinFix AI*),
 4. checks the exe's contents: no `.env`, databases, settings, logs, tests or
    reports, and no key-like strings,
-5. **starts the packaged exe** with `--self-test` and records the result,
+5. **starts the packaged exe** with `--self-test`, which opens every page in both
+   themes, runs the full approve-and-verify flow in demo mode and operates every
+   button, tab, toggle, dropdown and text box on every page (file dialogs,
+   credential storage, "Start with Windows" and AI requests are replaced with
+   harmless stand-ins during the test), and records the result,
 6. writes `dist/WinFixAI.zip` (exe, README, LICENSE, THIRD-PARTY-NOTICES),
    `dist/WinFixAI.sha256`, `dist/build_report.txt` and `dist/test_report.txt`.
 
@@ -242,7 +246,7 @@ CI runs the same script on `windows-latest` for every push (see
 Pushing a `v*` tag publishes a GitHub Release:
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
+git tag v1.0.1 && git push origin v1.0.1
 ```
 
 ## Tech stack

@@ -206,8 +206,7 @@ class _ChoiceRow(QWidget):
 
     def mouseReleaseEvent(self, event) -> None:
         if self.isEnabled():
-            self.radio.setChecked(True)
-            self.radio.clicked.emit(True)
+            self.radio.click()  # checks it and emits clicked, like a real click
         super().mouseReleaseEvent(event)
 
 

@@ -197,3 +197,29 @@ def test_missing_fields_do_not_crash_analysis():
     d = troubleshooting.analyze(Category.HIGH_MEMORY, results)
     assert d.top_cause.id == "memory_pressure"
     assert d.evidence_cards[0].detail == "In use"
+
+
+@pytest.mark.parametrize("problem, expected", [
+    ("my pc is slow", "slow_computer"),
+    ("laptop lagging a lot", "slow_computer"),
+    ("chrome uses too much ram", "high_memory"),
+    ("laptop overheating", "high_cpu"),
+    ("wifii keeps droping", "wifi_disconnecting"),
+    ("ethernet not working", "internet_down"),
+    ("interent not working", "internet_down"),
+    ("websites won't load", "dns_problems"),
+    ("update stuck at 0%", "windows_update"),
+    ("c drive is full", "low_disk_space"),
+    ("bluetoth not working", "bluetooth"),
+    ("speakers not working", "audio"),
+    ("printr offline", "printer"),
+    ("blue screen", "app_crashes"),
+    ("app stopped working and closes", "app_crashes"),
+    ("pc takes forever to boot", "startup_problems"),
+    ("touchpad stopped working", "device_driver"),
+    ("search bar not working", "windows_search"),
+])
+def test_classifier_understands_everyday_wording_and_typos(problem, expected):
+    from app.knowledge.categories import classify
+
+    assert classify(problem).value == expected
