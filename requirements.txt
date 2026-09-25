@@ -13,5 +13,8 @@ PySide6-Essentials>=6.6
 # LLM (cloud providers use the REST API via httpx; no vendor SDK required)
 httpx>=0.26
 
+# API keys are stored in Windows Credential Manager through keyring
+keyring>=24
+
 # Development / testing
 pytest>=8.0

@@ -1,337 +1,256 @@
 # WinFix AI
 
-**An AI-powered Windows troubleshooting and remediation agent.**
+**Troubleshoot Windows problems with evidence, not guesswork.**
 
-Describe a problem in plain language — *"My laptop is very slow"*, *"My Wi-Fi
-keeps disconnecting"*, *"Windows Update isn't working"* — and WinFix AI plans a
-diagnosis, runs controlled read-only diagnostics, reasons over the evidence,
-recommends a safe fix, **asks for your approval**, applies only whitelisted
-remediations, and then verifies whether the problem actually improved.
+Describe a problem in your own words, such as *"My laptop is very slow"*,
+*"Wi-Fi keeps disconnecting"* or *"Windows Update isn't working"*. WinFix AI then:
 
-WinFix AI is a real troubleshooting agent, not an LLM chatbot. The AI can
-*choose* which registered tool to run; it can never generate or execute
-arbitrary code.
+1. runs read-only checks on your PC,
+2. shows you the measurements and the most likely cause,
+3. proposes one fix from a fixed list of reviewed actions,
+4. changes nothing until you approve it,
+5. measures again and shows the before and after, so you know whether the fix worked.
+
+It is a Windows 11-style desktop app (light and dark mode) built to a detailed
+design spec. The AI can pick which **read-only** checks to run next; it can never
+run commands, scripts, registry edits or code.
 
 ---
 
-## The problem
+## Download (Windows 10 1809+ / Windows 11, 64-bit)
 
-Windows troubleshooting is guesswork for most users. Advice found online is
-often unsafe (arbitrary registry edits, random PowerShell scripts) and rarely
-verifies whether it worked. Letting an LLM run shell commands directly is
-dangerous.
+Get **WinFixAI.zip** (or **WinFixAI.exe**) from the
+[latest release](https://github.com/Noyoucringe/WinFix-AI/releases/latest) or
+from the **Build Windows executable** workflow run in the Actions tab (artifact
+`WinFixAI-<commit>`). Each download has a `WinFixAI.sha256` file.
 
-## The solution
+1. Check the file: `Get-FileHash .\WinFixAI.exe -Algorithm SHA256` must match
+   `WinFixAI.sha256`.
+2. Double-click `WinFixAI.exe`. You don't need an installer or Python.
+3. The build isn't code-signed, so SmartScreen may say *"Windows protected your
+   PC"*. Choose **More info → Run anyway** if you trust the source.
 
-A bounded agent that operates inside a **controlled action space**:
+Some fixes (restarting a service or a network adapter) need administrator
+rights. WinFix asks through the normal Windows UAC prompt, and only for that
+single approved action. You don't need to run the whole app as administrator.
 
+| What | Where |
+|------|-------|
+| History, settings, logs | `%LOCALAPPDATA%\WinFixAI` |
+| API keys (only if you turn on cloud analysis) | Windows Credential Manager, entry `WinFix AI` |
+| Start with Windows (optional) | `HKCU\...\Run` value `WinFix AI`, which runs a read-only `--health-check` |
+
+To uninstall, turn off *Start with Windows* in Settings, then delete
+`WinFixAI.exe` and `%LOCALAPPDATA%\WinFixAI`.
+
+```text
+WinFixAI.exe                 open the app
+WinFixAI.exe --demo          sample data, simulated fixes (isolated; changes nothing)
+WinFixAI.exe --self-test     go through every page and the full approval flow in demo
+                             mode, then write a report (add --screenshots DIR for images)
+WinFixAI.exe --health-check  quick read-only check (used at sign-in)
+WinFixAI.exe --version
 ```
-USER → natural-language problem
-     → AI agent classifies + plans
-     → controlled read-only Windows diagnostics
-     → structured evidence
-     → AI analysis → diagnosis with confidence + evidence
-     → USER APPROVAL (mandatory)
-     → whitelisted remediation
-     → verification (before/after)
-     → result + audit history
-```
-
-Design priorities: **reliability > features, safety > autonomy, evidence > LLM
-guesses, verification > assuming success, simple architecture > complexity.**
 
 ---
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-    U[User: natural-language problem] --> P[Planner<br/>classify + select tools]
-    P --> DE[Diagnostic Engine]
-    DE --> R[(Tool Registry<br/>read-only diagnostics)]
-    R --> EV[Structured Evidence]
-    EV --> AN[LLM Provider<br/>local / OpenAI / Anthropic]
-    AN --> DX[Diagnosis<br/>causes + confidence + evidence]
-    DX --> RE[Remediation Engine<br/>proposes whitelisted fixes]
-    RE --> AP{User Approval?}
-    AP -- no --> STOP[No changes made]
-    AP -- yes --> SF[Safety Validator]
-    SF --> RR[(Tool Registry<br/>whitelisted remediations)]
-    RR --> VE[Verification Engine<br/>re-run + compare]
-    VE --> OUT[Result + SQLite Audit History]
+flowchart TB
+    subgraph UI["Desktop app (PySide6, Windows 11 Fluent design)"]
+        direction LR
+        Pages["Home · Troubleshoot · History · Diagnostics · Settings · About"]
+        Ctrl["TroubleshootController<br/>(worker threads, UI never blocks)"]
+        Dlg{{"Approval dialog<br/>'Apply fix'"}}
+    end
+
+    subgraph Core["Agent core (app/core)"]
+        Plan["Planner<br/>classify problem → checks"]
+        Agent["Agent<br/>max 10 steps · max 3 fix attempts"]
+        Safety["Safety validator<br/>registry · arguments · approval · limits"]
+        Know["Knowledge<br/>evidence rules → causes + confidence"]
+        Rem["Remediation engine<br/>proposes from category allow-list"]
+        Ver["Verification engine<br/>re-measure → re-analyze → before/after"]
+        Hist[("SQLite history<br/>WAL · migrations")]
+    end
+
+    subgraph Tools["Tool registry"]
+        Diag["34 read-only diagnostics<br/>psutil · Win32 API · fixed PowerShell queries"]
+        Fix["17 predefined fixes<br/>risk · admin flag · verification checks"]
+    end
+
+    subgraph AI["AI (optional)"]
+        Local["Local analysis (default, offline)"]
+        Cloud["Cloud provider (opt-in)<br/>OpenAI- or Anthropic-compatible"]
+        Priv["Privacy sanitizer<br/>minimize + redact"]
+    end
+
+    Pages --> Ctrl --> Agent
+    Agent --> Plan --> Safety --> Diag
+    Diag --> Know --> Agent
+    Agent -- "evidence summary" --> Priv --> Cloud
+    Cloud -- "tool NAMES only (validated)" --> Safety
+    Agent --> Local
+    Agent --> Rem --> Dlg
+    Dlg -- "approved" --> Safety --> Fix
+    Fix -- "UAC for admin fixes<br/>(--run-remediation helper)" --> Win[(Windows)]
+    Diag --> Win
+    Fix --> Ver --> Diag
+    Agent --> Hist
+    Keys[["Windows Credential Manager<br/>API keys"]] -.-> Cloud
 ```
 
 ### The safety boundary
 
 ```mermaid
 flowchart LR
-    LLM[LLM] -- selects tool NAME --> SV[Safety Validator]
-    SV -- validates registration<br/>+ arguments<br/>+ approval --> REG[Tool Registry]
-    REG -- app-owned function --> WIN[Windows]
-    LLM -. NEVER .-x SHELL[Arbitrary PowerShell / CMD / code]
+    LLM["AI model"] -- "names of read-only checks" --> SV["Safety validator"]
+    User["You"] -- "Apply fix (per action)" --> SV
+    SV -- "registered + valid arguments + approved + within limits" --> REG["App-owned functions"]
+    REG --> WIN["Windows"]
+    LLM -. "never" .-x SHELL["PowerShell · cmd · scripts · registry · downloads"]
 ```
 
-The LLM emits a **tool name** (e.g. `flush_dns`). The application owns the
-implementation, validates the arguments, enforces approval and timeouts, and
-executes the function. There is no `eval`, `exec`, or LLM-driven shell path
-anywhere in the codebase — a fact the safety test suite asserts.
+* **Only predefined functions change anything.** Each fix is a Python function
+  that ships with the app and has fixed arguments, a risk level and an admin flag.
+  There is no `eval`, `exec`, `shell=True` or free-form PowerShell anywhere. The
+  safety tests check the source tree for this.
+* **The AI never proposes fixes.** A cloud model may only name up to three extra
+  **read-only** checks. Each name is validated against the registry, and anything
+  else is rejected and logged. Fix proposals come from the evidence rules and the
+  category's allow-list.
+* **Approval is enforced twice**: by the dialog in the UI, and again by the
+  safety validator, which refuses to run a fix unless `approved=True`.
+* **Bounded:** `MAX_AGENT_STEPS = 10`, `MAX_REMEDIATION_ATTEMPTS = 3`, and a
+  timeout on every tool.
+* **Rejected by design:** arbitrary shell or PowerShell, arbitrary executables,
+  arbitrary registry edits, arbitrary file deletion, driver downloads and
+  anything that disables security features.
+
+### Privacy
+
+* Analysis is **local by default** and nothing leaves the PC.
+* Cloud analysis is opt-in (Settings → AI provider). Only measurements and
+  findings are sent. Process names and event-log excerpts are separate toggles.
+  Every string is scrubbed of user names, the PC name, profile paths, IP and MAC
+  addresses, e-mail addresses and anything that looks like a key or password.
+  Each session records exactly what was sent, and History shows it.
+* Passwords, tokens, API keys, browser cookies and personal files are never sent.
+* API keys live in Windows Credential Manager. They are masked in the UI and are
+  never written to settings, logs, history or the executable.
 
 ---
 
-## Features
+## What it can diagnose and fix
 
-- **27 read-only diagnostics** across system, performance, processes, startup,
-  network, services, devices, drivers, events, storage, updates, and apps.
-- **16 whitelisted remediation actions** with risk levels, admin flags, and
-  structured results.
-- **Bounded agent loop** (max 10 diagnostic steps, max 3 remediation attempts).
-- **Mandatory user approval** before any system change; stronger confirmation
-  for high-risk actions.
-- **Automatic verification** with before/after comparison — never assumes a fix
-  worked.
-- **Offline-first**: full local diagnostics and deterministic analysis work
-  with no AI backend. The LLM only enriches the explanation.
-- **SQLite audit history** of every session.
-- **Three entry points**: PySide6 desktop GUI, FastAPI backend, and CLI.
-- **Cross-platform-tolerant**: Windows-only tools degrade gracefully off
-  Windows, so the whole test suite runs on CI/Linux.
+**34 read-only checks** cover system and uptime, CPU, memory (including
+committed and compressed memory), disk activity and free space, reclaimable
+space, running and unresponsive apps, startup apps, the network adapter,
+gateway, DNS and internet, Wi-Fi, services (Search, Update, BITS, Audio,
+Spooler, Bluetooth, WLAN), pending restarts, Windows Update, devices and
+drivers, Bluetooth, and System and Application event logs.
 
----
+**17 fixes**, all needing approval:
 
-## Safety model
-
-| Guarantee | How it is enforced |
-|-----------|--------------------|
-| No arbitrary code execution | LLM selects registered tool names only; validated against the registry |
-| Remediation requires approval | `SafetyValidator.validate_remediation(approved=...)` raises without it |
-| Diagnostics are read-only | Diagnostic tools declare `read_only=True`; the engine refuses non-read-only tools |
-| Bounded autonomy | `MAX_AGENT_STEPS`, `MAX_REMEDIATION_ATTEMPTS` |
-| Arguments validated | Declared parameter schema, type-checked (bools rejected as ints) |
-| Timeouts | Every tool runs with a timeout; a hang becomes an error result |
-| Local-first privacy | Diagnostics stay local; only minimized evidence is sent to a cloud LLM |
-| No secrets in logs/exe | API keys come from `.env` at runtime, never bundled or logged |
-
-Protected system processes can never be terminated; storage remediations only
-ever touch well-known temp/cache locations.
+| Fix | Risk |
+|-----|------|
+| Clear temporary files older than a day · Flush DNS cache · Renew IP address | Low |
+| Restart Windows Search / Update / BITS / Audio / Print Spooler / Bluetooth / WLAN service · Restart Explorer | Low |
+| Empty Recycle Bin · Clear Windows Update cache (refused while an update installs) · Release IP address · Restart network adapter · End one unresponsive app (never system processes) | Medium |
+| Reset Winsock (restart required; extra confirmation) | High |
 
 ---
 
-## Diagnostic engine
+## Project layout
 
-Every tool returns the same contract:
-
-```json
-{
-  "success": true,
-  "tool": "get_memory_usage",
-  "data": { "usage_percent": 91, "available_gb": 1.4 },
-  "error": null,
-  "duration_ms": 12.3,
-  "timestamp": "2026-09-24T...",
-  "tool_version": "1.0"
-}
+```text
+app/
+  __init__.py       version (1.0.0), engine version, publisher
+  main.py           entry point: GUI, --demo, --self-test, --health-check, CLI tools
+  core/             models, tool registry, safety validator, planner, agent,
+                    remediation/verification engines, elevation helper, history
+                    (SQLite + migrations), settings, credentials, privacy,
+                    autostart, health check, structured logging
+  diagnostics/      read-only diagnostics + live sampler for the Diagnostics page
+  remediation/      the predefined fixes
+  knowledge/        categories, evidence rules, check and fix catalogs
+  llm/              local and cloud providers, validated tool selection
+  gui/              theme tokens, icons, motion, window chrome, controller,
+                    widgets/ (Fluent controls), pages/ (one module per screen)
+  demo.py           isolated demo mode (recorded evidence, simulated fixes)
+  api/              optional FastAPI backend (not bundled in the exe)
+tests/              unit · integration · safety · ui (offscreen)
+scripts/            build.py, build_windows.ps1, generate_icon.py, version resource
+WinFixAI.spec       PyInstaller spec
 ```
 
-A failing diagnostic never crashes the run — its error is recorded and the
-engine continues, so partial evidence is always available.
+## Run from source
 
-## Agent architecture
-
-The agent **reasons about relevance** rather than running everything. For
-*"My laptop is very slow"* it selects CPU, memory, disk, top-process, and
-startup diagnostics — not the network or Bluetooth tools. It exposes concise,
-user-facing reasoning (e.g. *"CPU usage is normal, but memory utilization is
-high"*), never hidden chain-of-thought.
-
-## Remediation architecture
-
-Remediations are predefined, whitelisted functions with metadata (risk,
-admin requirement, verification tools). The engine proposes fixes ordered
-low-risk-first, drawn only from the category's allowed set. Execution is gated
-behind the safety validator's approval check.
-
-## Verification loop
-
-```mermaid
-flowchart LR
-    D[Diagnosis] --> F1[Fix #1] --> V1{Improved?}
-    V1 -- yes --> OK[Report success]
-    V1 -- no --> F2[Fix #2] --> V2{Improved?}
-    V2 -- yes --> OK
-    V2 -- no --> F3[Fix #3 / stop at limit] --> REPORT[Report findings honestly]
+```powershell
+git clone https://github.com/Noyoucringe/WinFix-AI.git
+cd WinFix-AI
+py -3.12 -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python -m app.main            # the desktop app
+python -m app.main --demo     # sample data, simulated fixes
 ```
 
-Verification re-runs the relevant diagnostics and compares measured signals
-(CPU %, free GB, connectivity booleans, service state). Retries are capped at 3.
+Developer commands: `python -m app.main tools` (list tools),
+`python -m app.main diagnose "My Wi-Fi keeps disconnecting"`,
+`python -m app.main serve` (optional HTTP API; fixes need `"approved": true`,
+otherwise it returns 403).
 
----
+## Tests
+
+```powershell
+python -m pytest                 # unit, integration, safety and UI tests
+python -m pytest tests/safety    # the safety guarantees only
+python -m app.main --self-test --offscreen --screenshots shots
+```
+
+The safety suite checks that shell commands, unregistered tools, invalid
+arguments and unapproved fixes are rejected. It also checks that loops are
+bounded, that secrets never reach logs or settings, and that the cloud payload
+is sanitized. The UI tests open every page in both themes, check that API keys
+are masked and never saved to settings, and run the packaged self-test flow.
+
+## Build WinFixAI.exe
+
+PyInstaller can't cross-compile, so build on Windows:
+
+```powershell
+powershell -ExecutionPolicy RemoteSigned -File scripts\build_windows.ps1
+```
+
+This creates `.venv-build`, installs the requirements plus PyInstaller, and runs
+`scripts/build.py`, which:
+
+1. checks that version numbers match and scans `app/` for anything that looks like a secret,
+2. runs the whole test suite,
+3. builds `dist/WinFixAI.exe` (one file, windowed, icon, version resource
+   *WinFix AI 1.0.0 / publisher WinFix AI*),
+4. checks the exe's contents: no `.env`, databases, settings, logs, tests or
+   reports, and no key-like strings,
+5. **starts the packaged exe** with `--self-test` and records the result,
+6. writes `dist/WinFixAI.zip` (exe, README, LICENSE, THIRD-PARTY-NOTICES),
+   `dist/WinFixAI.sha256`, `dist/build_report.txt` and `dist/test_report.txt`.
+
+CI runs the same script on `windows-latest` for every push (see
+`.github/workflows/build-windows.yml`) and uploads everything as an artifact.
+Pushing a `v*` tag publishes a GitHub Release:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
 
 ## Tech stack
 
-- **Python 3.10+**
-- **psutil** — cross-platform system metrics
-- **Pydantic / pydantic-settings** — domain models & configuration
-- **FastAPI + Uvicorn** — orchestration backend
-- **PySide6** — desktop GUI
-- **httpx** — cloud LLM REST calls (no vendor SDK required)
-- **SQLite** — audit history
-- **pytest** — test suite
+Python 3.12 · PySide6 (Qt 6) · psutil · ctypes/Win32 · pydantic ·
+SQLite · keyring (Windows Credential Manager) · httpx · PyInstaller · pytest.
+Icons: Fluent UI System Icons (MIT). See `THIRD-PARTY-NOTICES.txt` in the zip.
 
----
+## License
 
-## Download (Windows)
-
-**[Download the latest WinFix.exe →](https://github.com/Noyoucringe/WinFix-AI/releases/latest)**
-
-1. Download `WinFix.exe` from the latest release.
-2. Double-click it. No Python installation is required.
-3. Windows SmartScreen may warn that the publisher is unknown — the build is
-   not code-signed. Choose **More info → Run anyway** if you trust the build.
-
-Some fixes (restarting services, network adapters) need elevation: right-click
-`WinFix.exe` → **Run as administrator**. Diagnostics work fine without it.
-
-WinFix stores its history, logs, and reports in `%LOCALAPPDATA%\WinFixAI`.
-To enable AI-written explanations, drop a `.env` file next to `WinFix.exe`
-(see `.env.example`). The executable never contains API keys.
-
-## Installation from source
-
-```bash
-git clone https://github.com/Noyoucringe/WinFix-AI.git
-cd WinFix-AI
-python -m venv .venv
-# Windows:  .venv\Scripts\activate
-# Linux/mac: source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # optional: configure an AI backend
-```
-
-## Usage
-
-```bash
-python -m app.main gui                       # launch the desktop app (default)
-python -m app.main diagnose "My Wi-Fi keeps disconnecting"
-python -m app.main tools                     # list all registered tools
-python -m app.main serve                     # start the FastAPI backend
-python -m app.main report                    # save a JSON diagnostic report
-```
-
-### Backend API
-
-```
-GET  /api/health
-GET  /api/tools
-POST /api/diagnose                {"problem": "..."}
-POST /api/agent/run               {"problem": "..."}
-POST /api/remediation/approve     {"session_id": "...", "tool": "..."}
-POST /api/remediation/execute     {"session_id": "...", "tool": "...", "approved": true}
-POST /api/verify                  {"session_id": "..."}
-GET  /api/history
-GET  /api/history/{id}
-```
-
-Executing a remediation without `approved: true` returns **403**.
-
----
-
-## Development
-
-```bash
-pip install -r requirements.txt
-python -m pytest              # run all tests
-python -m app.main tools      # sanity-check the registry
-```
-
-Project layout:
-
-```
-app/
-  core/         config, logging, result contract, models, registry, safety,
-                planner, engines (diagnostic/remediation/verification), agent, history
-  diagnostics/  27 read-only Windows diagnostics
-  remediation/  16 whitelisted remediation actions
-  knowledge/    15 troubleshooting categories + offline evidence interpretation
-  llm/          vendor-neutral LLM provider abstraction
-  api/          FastAPI backend
-  gui/          PySide6 desktop app (views, widgets, workers)
-tests/          unit / integration / safety
-scripts/        PyInstaller build script
-```
-
-## Testing
-
-```bash
-python -m pytest            # unit + integration + safety
-python -m pytest tests/safety   # safety guarantees only
-```
-
-The safety suite verifies that arbitrary shell commands are rejected,
-unregistered tools are rejected, remediation without approval is blocked,
-invalid parameters are rejected, and the agent/remediation loops are bounded.
-
-## Packaging
-
-PyInstaller **cannot cross-compile** — a Windows `.exe` can only be built on
-Windows.
-
-**On Windows:**
-
-```powershell
-py -m pip install -r requirements.txt pyinstaller
-py scripts/build_exe.py        # -> dist/WinFix.exe
-```
-
-**Via CI (any platform):** `.github/workflows/build-windows.yml` builds the
-same artifact on a `windows-latest` runner. It runs on every push to `main`
-and can be triggered manually from the **Actions** tab; the `.exe` is uploaded
-as a build artifact. Pushing a tag that starts with `v` (e.g. `v1.1.0`) also
-publishes it as a downloadable GitHub Release asset:
-
-```bash
-git tag v1.1.0 && git push origin v1.1.0
-```
-
-The build is defined by `winfix.spec` (bundled icon/assets, Windows version
-resource, trimmed Qt modules). The executable launches the GUI, reads
-configuration from a `.env` beside it, and never contains API keys.
-
----
-
-## Example troubleshooting flow
-
-1. User: *"My laptop is very slow."*
-2. Agent classifies it as a performance issue and plans CPU/memory/disk/
-   process/startup diagnostics.
-3. Diagnostics run read-only; evidence is collected (e.g. memory at 91%).
-4. Analysis: *"System performance is likely affected by memory pressure —
-   Chrome is using 4.8 GB."*
-5. Recommends *"Close an unresponsive application"* (Low risk) and asks for
-   approval.
-6. On **Approve**, the whitelisted action runs.
-7. Verification re-checks memory; reports **"Fix completed"** or, honestly,
-   **"The recommended fix did not resolve the issue — here is what was found."**
-8. The full session is saved to history.
-
----
-
-## Security considerations
-
-- Diagnostics stay local; only minimized, sanitized evidence is sent to a cloud
-  LLM, and only when one is configured. Passwords, tokens, cookies, and personal
-  files are never transmitted.
-- The backend has no unrestricted machine access — it only invokes the same
-  safety-checked registry. Windows-specific actions execute on the local client.
-- `.env`, logs, generated reports, and the local database are git-ignored.
-
-## Roadmap
-
-- Client/server split so the desktop client executes Windows actions while a
-  backend handles orchestration and LLM calls.
-- Native LLM tool-calling loop (schemas are already exposed by the registry).
-- More remediation categories and rollback snapshots where practical.
-- Signed installer (MSI) in addition to the PyInstaller executable.
-
----
-
-*WinFix AI — diagnose, prove, recommend, ask, fix, verify.*
+MIT. See [LICENSE](LICENSE).

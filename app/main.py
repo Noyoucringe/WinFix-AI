@@ -40,7 +40,12 @@ def _cmd_gui(args: argparse.Namespace) -> int:
 
 
 def _cmd_serve(_args: argparse.Namespace) -> int:
-    from app.api.server import run
+    try:
+        from app.api.server import run
+    except ImportError:
+        print("The HTTP API is not included in WinFixAI.exe. Run it from source: "
+              "python -m app.main serve")
+        return 2
 
     run()
     return 0

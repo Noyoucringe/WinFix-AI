@@ -108,7 +108,7 @@ def header(title: str, subtitle: str | None = None, *, caption: str | None = Non
     col = QVBoxLayout()
     col.setSpacing(4)
     if caption:
-        col.addWidget(Text(caption, "caption", "secondary"))
+        col.addWidget(Text(caption, "caption", "secondary", wrap=True))
     col.addWidget(Text(title, style) if isinstance(title, str) else title)
     if subtitle:
         col.addWidget(Text(subtitle, "body", "secondary", wrap=True))

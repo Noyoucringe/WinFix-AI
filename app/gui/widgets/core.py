@@ -58,7 +58,14 @@ class Text(QLabel):
                  selectable: bool = False) -> None:
         super().__init__(text, parent)
         self.setFont(font(style))
+        # Sentences always wrap; only short labels stay on one line.
+        wrap = wrap or len(text) > 48
         self.setWordWrap(wrap)
+        if wrap:
+            # Qt guesses a wrapped label's minimum width from font metrics, and
+            # the guess varies by platform; make wrapping always win over
+            # widening the page.
+            self.setMinimumWidth(48)
         self.setTextFormat(Qt.TextFormat.PlainText)
         if role:
             self.setProperty("role", role)
@@ -106,6 +113,62 @@ def _fill(layout, items, stretch_at, align) -> None:
             layout.addStretch(1)
     if stretch_at == -1:
         layout.addStretch(1)
+
+
+class FlowLayout(QLayout):
+    """Lays items left to right and wraps them onto new lines (example chips)."""
+
+    def __init__(self, parent: QWidget | None = None, spacing: int = 8) -> None:
+        super().__init__(parent)
+        self._items = []
+        self._spacing = spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item) -> None:  # noqa: N802 - Qt override
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int):  # noqa: N802
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int):  # noqa: N802
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self) -> Qt.Orientation:  # noqa: N802
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return self._arrange(QRectF(0, 0, width, 0).toRect(), apply=False)
+
+    def setGeometry(self, rect) -> None:  # noqa: N802
+        super().setGeometry(rect)
+        self._arrange(rect, apply=True)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:  # noqa: N802
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        return size
+
+    def _arrange(self, rect, apply: bool) -> int:
+        x, y, line = rect.x(), rect.y(), 0
+        for item in self._items:
+            hint = item.sizeHint()
+            if x + hint.width() > rect.right() + 1 and line > 0:
+                x, y, line = rect.x(), y + line + self._spacing, 0
+            if apply:
+                item.setGeometry(QRectF(x, y, hint.width(), hint.height()).toRect())
+            x += hint.width() + self._spacing
+            line = max(line, hint.height())
+        return y + line - rect.y()
 
 
 def host(layout: QLayout, parent: QWidget | None = None) -> QWidget:
@@ -195,6 +258,14 @@ class RowButton(QPushButton):
             return super().sizeHint()
         hint = layout.sizeHint()
         return QSize(hint.width(), max(self._min_height, hint.height()))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        # QPushButton's minimum is its preferred size; a row may shrink to its
+        # layout's minimum so its texts wrap instead of widening the page.
+        layout = self.layout()
+        if layout is None:
+            return super().minimumSizeHint()
+        return QSize(layout.minimumSize().width(), self._min_height)
 
     def event(self, event) -> bool:
         result = super().event(event)

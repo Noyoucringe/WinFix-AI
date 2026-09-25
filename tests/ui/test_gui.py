@@ -135,3 +135,16 @@ def test_packaged_self_test_passes(qapp, monkeypatch, tmp_path):
     text = report.read_text(encoding="utf-8")
     assert code == 0, text
     assert "FAIL" not in text
+
+
+def test_empty_history_message_is_fully_visible(qapp, window):
+    from app.gui.widgets.composite import EmptyState
+
+    window.navigate("home")
+    _settle(qapp)
+    empty = window.page("home").findChild(EmptyState)
+    assert empty is not None
+    label = empty.message
+    # The whole sentence fits in the label (it wraps rather than clipping).
+    needed = label.heightForWidth(label.width())
+    assert label.width() >= 200 and label.height() >= needed

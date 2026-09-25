@@ -3,7 +3,8 @@
 * Uses its own temporary data folder — your real history and settings are
   never read or written.
 * For known problems, diagnostics replay measurements recorded on real
-  Windows PCs; anything else is measured live (read-only).
+  Windows PCs (checks that weren't recorded report "not recorded"); other
+  problems and the Diagnostics page measure this PC live (read-only).
 * Fixes are simulated. Nothing on this PC is changed.
 """
 
@@ -16,7 +17,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from app.core.models import Category, Session
-from app.core.result import success_result
+from app.core.result import success_result, unsupported_result
 from app.demo_evidence import (
     BLUETOOTH_MISSING,
     DNS_BROKEN,
@@ -118,6 +119,17 @@ class DemoMode:
             return success_result(name, {"simulated": True, "demo": True})
         if name in self._evidence:
             return success_result(name, copy.deepcopy(self._evidence[name]))
+        if self._evidence:
+            # A recorded scenario stays fully recorded: mixing in live readings
+            # from this PC would make the demo depend on the machine it runs on.
+            return unsupported_result(name, "Not recorded in this demo scenario.")
+        return self._original(name, arguments)
+
+    def live_execute(self, name, arguments=None):
+        """Run a read-only tool for real (the Diagnostics page shows this PC)."""
+        spec = self.registry.get_tool(name)
+        if not spec.read_only:
+            raise PermissionError("Demo mode never runs fixes for real.")
         return self._original(name, arguments)
 
     def restore(self) -> None:

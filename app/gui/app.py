@@ -268,6 +268,8 @@ class SelfTest:
         self.check("Troubleshooting flow: diagnose", self._diagnose)
         self.check("Troubleshooting flow: approve and verify", self._approve)
         self.check("Compact navigation below 1000 px", self._compact)
+        self.check("Every page fits a 1000 px window", lambda: self._fits(1000, 720))
+        self.check("Every page fits the minimum window size", lambda: self._fits(760, 560))
         self.window._force_close = True
         self.window.close()
         return self.checks
@@ -329,6 +331,44 @@ class SelfTest:
         if verification is None or not verification.improved:
             _fail("verification did not report an improvement")
         return f"{proposal.title}: {verification.headline}"
+
+    def _fits(self, width: int, height: int) -> str:
+        """No page may be wider than its visible area (content would be clipped)."""
+        from PySide6.QtGui import QFontDatabase
+
+        if not QFontDatabase.families():
+            # e.g. Qt's offscreen platform on Windows: no fonts are loaded and
+            # text is measured with placeholder metrics, so widths mean nothing.
+            return "skipped: this Qt platform has no fonts to measure text with"
+        w = self.window
+        w.resize(width, height)
+        self.settle()
+        too_wide = []
+        troubleshoot_views = ("start", "diagnosis", "fix", "result")
+        for key in PAGE_KEYS + ["history_detail"] + [f"troubleshoot:{v}"
+                                                      for v in troubleshoot_views]:
+            if key.startswith("troubleshoot:"):
+                w.navigate("troubleshoot")
+                w.page("troubleshoot").show_view(key.split(":")[1])
+                page = w.page("troubleshoot")
+            elif key == "history_detail":
+                rows = w.history.list_sessions(limit=1)
+                w.navigate(key, session_id=rows[0]["id"])
+                page = w.page(key)
+            else:
+                w.navigate(key)
+                page = w.page(key)
+            self.settle()
+            self.shot(f"size{width}_{key.replace(':', '_')}")
+            need = page.column.minimumSizeHint().width()
+            have = page.scroll.viewport().width()
+            if need > have:
+                too_wide.append(f"{key} needs {need} px, has {have} px")
+        w.resize(1280, 860)
+        self.settle()
+        if too_wide:
+            _fail("; ".join(too_wide))
+        return f"{width}x{height}"
 
     def _compact(self) -> str:
         w = self.window

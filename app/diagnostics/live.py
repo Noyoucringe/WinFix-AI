@@ -14,7 +14,7 @@ from collections import deque
 import psutil
 
 from app.core import winapi
-from app.diagnostics.performance import _compressed_memory_mb, _group
+from app.diagnostics.performance import _compressed_memory_mb, _group, iter_processes
 from app.diagnostics.storage import SYSTEM_DRIVE, _drive_label
 
 _GB = 1024 ** 3
@@ -88,7 +88,7 @@ class LiveSampler:
         cores = psutil.cpu_count(logical=True) or 1
         hung = winapi.hung_window_pids()
         seen, rows = set(), []
-        for proc in psutil.process_iter(["pid", "name"]):
+        for proc in iter_processes():
             pid = proc.info["pid"]
             seen.add(pid)
             cached = self._procs.setdefault(pid, proc)
@@ -102,7 +102,7 @@ class LiveSampler:
                                  "cpu_percent": cached.cpu_percent(None) / cores,
                                  "memory_mb": cached.memory_info().rss / _MB,
                                  "not_responding": pid in hung})
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            except (psutil.Error, OSError):
                 continue
         for pid in list(self._procs):
             if pid not in seen:

@@ -6,6 +6,7 @@ import psutil
 
 from app.core.platform_utils import IS_WINDOWS
 from app.core.result import ToolResult, run_tool, unsupported_result
+from app.diagnostics.performance import iter_processes
 
 IMPORTANT_SERVICES = {
     "wuauserv": "Windows Update",
@@ -123,7 +124,7 @@ def get_search_indexer_status() -> ToolResult:
         memory_mb = cpu = 0.0
         count = 0
         responding = True
-        for proc in psutil.process_iter(["name"]):
+        for proc in iter_processes():
             if (proc.info.get("name") or "").lower() != "searchindexer.exe":
                 continue
             try:
@@ -132,7 +133,7 @@ def get_search_indexer_status() -> ToolResult:
                 count += 1
                 if proc.status() in (psutil.STATUS_STOPPED, psutil.STATUS_ZOMBIE):
                     responding = False
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (psutil.Error, OSError):
                 continue
         return {
             "service": service,

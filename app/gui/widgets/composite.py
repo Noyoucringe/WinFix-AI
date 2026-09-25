@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QLayout,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -97,8 +99,15 @@ class FlowGrid(QWidget):
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(spacing)
+        # The grid's own minimum is "all columns"; this widget can shrink to
+        # one column instead, so let minimumSizeHint decide.
+        self._grid.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         self._items: list[QWidget] = []
         self._columns = 0
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        widest = max((w.minimumSizeHint().width() for w in self._items), default=0)
+        return QSize(max(widest, 1), super().minimumSizeHint().height())
 
     def set_items(self, widgets: list[QWidget]) -> None:
         for w in self._items:
@@ -126,6 +135,36 @@ class FlowGrid(QWidget):
             self._grid.addWidget(w, i // columns, i % columns)
         for c in range(self._grid.columnCount()):
             self._grid.setColumnStretch(c, 1 if c < columns else 0)
+
+
+class ResponsiveColumns(QWidget):
+    """Main column plus a side panel; the panel moves below when narrow."""
+
+    def __init__(self, breakpoint: int = 760, main_stretch: int = 7, side_stretch: int = 3,
+                 spacing: int = 24, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._breakpoint = breakpoint
+        self._box = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self._box.setContentsMargins(0, 0, 0, 0)
+        self._box.setSpacing(spacing)
+        self._box.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        self.main = QVBoxLayout()
+        self.main.setSpacing(0)
+        self.side = QVBoxLayout()
+        self.side.setSpacing(0)
+        self._box.addLayout(self.main, main_stretch)
+        self._box.addLayout(self.side, side_stretch)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(max(self.main.minimumSize().width(), self.side.minimumSize().width()),
+                     super().minimumSizeHint().height())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        direction = (QBoxLayout.Direction.TopToBottom if self.width() < self._breakpoint
+                     else QBoxLayout.Direction.LeftToRight)
+        if self._box.direction() != direction:
+            self._box.setDirection(direction)
 
 
 class DiagnosticRow(QFrame):
@@ -198,8 +237,9 @@ class SettingsRow(RowButton):
                          Qt.AlignmentFlag.AlignVCenter)
         self.title = Text(title, "body")
         self.description = Text(description, "caption", "secondary", wrap=True)
-        self.description.setVisible(bool(description))
         layout.addLayout(vbox(self.title, self.description, spacing=2), 1)
+        if not description:
+            self.description.hide()
         if value is not None:
             self.value = Text(value, "body", "secondary")
             layout.addWidget(self.value, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -418,8 +458,11 @@ class Breadcrumb(QWidget):
         self._links: list[QPushButton] = []
         for i, part in enumerate(parts):
             last = i == len(parts) - 1
-            if last:
-                layout.addWidget(Text(part, style))
+            if last:  # shrinks, then elides, instead of widening the page
+                current = FitText(part, style, min_pixel_size=20)
+                current.setToolTip(part)
+                current.setMinimumWidth(120)
+                layout.addWidget(current, 1)
             else:
                 button = QPushButton(part)
                 button.setFlat(True)
@@ -430,7 +473,6 @@ class Breadcrumb(QWidget):
                 layout.addWidget(button)
                 layout.addWidget(IconLabel("chevron_right", "text_secondary", 16), 0,
                                  Qt.AlignmentFlag.AlignVCenter)
-        layout.addStretch(1)
         self._restyle()
         theme.manager().changed.connect(self._restyle)
 
@@ -458,7 +500,14 @@ class EmptyState(QWidget):
         body = Text(message, "body", "secondary", wrap=True)
         body.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         body.setMaximumWidth(420)
-        layout.addWidget(body, 0, Qt.AlignmentFlag.AlignHCenter)
+        # Stretches (not an alignment flag) center it, so the label gets real
+        # width to wrap into instead of its minimum.
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(body, 4)
+        row.addStretch(1)
+        layout.addLayout(row)
+        self.message = body
         if action is not None:
             layout.addSpacing(8)
             layout.addWidget(action, 0, Qt.AlignmentFlag.AlignHCenter)

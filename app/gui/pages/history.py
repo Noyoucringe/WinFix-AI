@@ -12,6 +12,7 @@ from app.core.report import session_report
 from app.gui.icons import IconLabel
 from app.gui.pages.base import AppContext, Page, clock, header, result_state
 from app.gui.widgets.composite import (
+    ResponsiveColumns,
     Breadcrumb,
     CompareTable,
     EmptyState,
@@ -39,8 +40,11 @@ class HistoryRow(RowButton):
         date.setFixedWidth(92)
         layout.addWidget(date)
         problem = Text(_title(row["problem"]), "body", wrap=True)
+        diagnosis = Text(row.get("diagnosis") or "—", "body", "secondary", wrap=True)
+        for text in (problem, diagnosis):  # wrap instead of widening the page
+            text.setMinimumWidth(60)
         layout.addWidget(problem, 3)
-        layout.addWidget(Text(row.get("diagnosis") or "—", "body", "secondary", wrap=True), 3)
+        layout.addWidget(diagnosis, 3)
         state, label = result_state(row.get("result"))
         status = Status(state, label)
         status.setFixedWidth(160)
@@ -204,14 +208,8 @@ class HistoryDetailPage(Page):
         self.add(meta)
         self.add(24)
 
-        columns = QHBoxLayout()
-        columns.setSpacing(24)
-        left = QVBoxLayout()
-        left.setSpacing(0)
-        right = QVBoxLayout()
-        right.setSpacing(0)
-        columns.addLayout(left, 7)
-        columns.addLayout(right, 3)
+        columns = ResponsiveColumns(breakpoint=820)
+        left, right = columns.main, columns.side
         self.add(columns)
 
         def section(layout, title, widget, gap=24):

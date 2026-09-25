@@ -117,6 +117,8 @@ class TroubleshootPage(Page):
     def show_view(self, view: str) -> None:
         if view in ("diagnosis", "fix", "result") and self.session is None:
             view = "start"
+        if view == "result" and self.session.verification is None:
+            view = "diagnosis"
         self.view = view
         self.clear()
         builder = {
@@ -409,7 +411,7 @@ class TroubleshootPage(Page):
     def _fix(self) -> None:
         session = self.session
         proposal = session.proposals[0]
-        self.add(Text(self._crumb(), "caption", "secondary"))
+        self.add(Text(self._crumb(), "caption", "secondary", wrap=True))
         self.add(4)
         crumb = Breadcrumb(["Diagnosis", "Recommended fix"])
         crumb.navigate.connect(lambda _i: self.show_view("diagnosis"))
